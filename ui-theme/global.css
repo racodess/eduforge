@@ -1,0 +1,29 @@
+/* Var Declaration */
+:root {
+    --primary: #1e1e2e;
+    --secondary: #181825;
+    --tertiary: #11111b;
+    --purple: #cba6f7;
+    --blue: #89b4fa;
+    --text: #cdd6f4;
+}
+
+/* Top-Bar Decoration */
+.stDecoration {
+    background-image: linear-gradient(to right, var(--purple), var(--blue));
+    animation: gradient 5s ease infinite;
+}
+
+/* Top-Bar */
+.stAppHeader {
+    background: var(--secondary);
+}
+
+/* Default Background */
+.stApp {
+    background: var(--primary);
+}
+
+#stHeadingDivider {
+    color: var(--purple);
+}
