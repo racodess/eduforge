@@ -20,7 +20,7 @@ with st.sidebar:
 
 output_format = {
     "title": "Question goes here.",
-    "choices": ["choice_1", "choice2", "choice3", "choice4"],
+    "choices": ["choice1", "choice2", "choice3", "choice4"],
     "answer": "index of answer from choices array"
 }
 
@@ -37,6 +37,10 @@ if "generate_btn" not in state:
 if "question" not in state:
     state.question = ""
 
+if "answer_message" not in state:
+    state.result = None
+    state.answer_message = ""
+
 if generate_btn:
     # Check for empty input
     if not user_input:
@@ -50,14 +54,14 @@ if generate_btn:
 
     # Make request for question
     client = OpenAI(api_key=openai_api_key)
-    state.messages = [{
+    state.message = [{
         "role": "user", 
         "content": f"Generate a question regarding {user_input}. Follow example json output format: {output_format}"
     }]
 
     response = client.chat.completions.create(
         model="gpt-3.5-turbo", 
-        messages=state.messages
+        messages=state.message
     )
 
     output = response.choices[0].message.content
@@ -68,18 +72,29 @@ if generate_btn:
 
 # Display question
 if state.generate_btn:
+    state.result = None
+
     st.header("Question", divider=True, anchor=False)
 
-    st.subheader(state["question"]["title"], anchor=False)
+    question = state["question"]
+    answer = question["choices"][int(question["answer"])]
 
-    c1, c2 = st.columns(2)
+    st.subheader(question["title"], anchor=False)
 
-    with c1:
-        a1 = st.button(state["question"]["choices"][0], use_container_width=True)
-        a2 = st.button(state["question"]["choices"][1], use_container_width=True)
-    with c2:
-        a3 = st.button(state["question"]["choices"][2], use_container_width=True)
-        a4 = st.button(state["question"]["choices"][3], use_container_width=True)
+    cols = st.columns(2)
 
-    if a1 or a2 or a3 or a4:
-        st.info(state["question"]["choices"][int(state["question"]["answer"])])
+    for i, choice in enumerate(question["choices"]):
+        col = cols[i % 2]
+        with col:
+            if st.button(choice, key=choice, use_container_width=True):
+                if choice == answer:
+                    st.session_state.result = "correct"
+                    state.answer_message = "Correct!"
+                else:
+                    st.session_state.result = "incorrect"
+                    state.answer_message = "Incorrect!"
+
+    if state.result == "correct":
+        st.success(state.answer_message)
+    elif state.result == "incorrect":
+        st.error(state.answer_message)

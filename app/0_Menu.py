@@ -11,7 +11,24 @@ st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
 # Content
 st.title('eduForge 📖')
 st.markdown('Welcome to **eduForge**! Enjoy your stay!')
-st.markdown("""# Version Notes: eduForge v0.1.1
+st.markdown("""
+
+# Version Notes: eduForge v0.1.2
+            
+## Changes
+- Added a Home page
+- Reorganized page order in sidebar
+- Updated the Quiz UI to correctly display answer feedback.
+
+### File Structure
+            
+- ```NEW``` %/app/pages/1_Home.py - home page outlining eduForge
+- ```RENAME/UPDATE``` %/app/pages/1_Quiz.py → %/app/pages/3_Quiz.py
+- ```RENAME``` %/app/pages/3_Chatbot.py → %/app/pages/4_Chatbot.py 
+            
+---        
+
+# Version Notes: eduForge v0.1.1
 As promised, dropping this shi mid-week! Welcome to my bootleg ass patch notes for v0.1.1 (which I named because my devious ass is the first to name a version so I've taken the liberty to make up a name :smiling_imp:)
 ## Changes
 Basic overview of changes made to eduForge
