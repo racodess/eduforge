@@ -26,7 +26,7 @@ st.divider()
 st.markdown("""
     ### Key Features
 
-    - **Anki Flashcards**: Leverage AI to transform data covering software engineering topics from uploaded PDF files, URLs, or text files into highly effective flashcards.
+    - **Flashcards**: Leverage AI to transform data covering software engineering topics from uploaded PDF files, URLs, or text files into highly effective flashcards.
     - **Quiz Questions**: To further support your flashcards, enhance your learning with AI-generated quiz questions tailored to any topic of your choice.
     - **Latest Updates**: Stay in the loop with our latest features and improvements, ensuring you never miss a new addition!
             
@@ -38,11 +38,6 @@ st.markdown("""
     ### Requirements
     - [Python 3.12+](https://www.python.org/)
     - [OpenAI API Key](https://openai.com/api/)
-    - [Anki](https://apps.ankiweb.net/) <sup> * </sup>
-        - [Anki Connect](https://ankiweb.net/shared/info/2055492159)
-        - [pdf viewer and editor](https://ankiweb.net/shared/info/319501851)
-            
-    <sup>* *Only needed to create Anki Flashcards* </sup>
 
     ### Feedback
     
