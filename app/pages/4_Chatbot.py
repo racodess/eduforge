@@ -1,17 +1,19 @@
 from openai import OpenAI
 import streamlit as st
+import os
 
+openai_api_key = os.getenv("OPENAI_API_KEY")
 with st.sidebar:
-    openai_api_key = st.text_input("OpenAI API Key", key="chatbot_api_key", type="password")
-    "[Get an OpenAI API key](https://platform.openai.com/account/api-keys)"
+    # openai_api_key = st.text_input("OpenAI API Key", key="chatbot_api_key", type="password")
+    "[Need an OpenAI API key?](https://openai.com/api/)"
 
 # Custom CSS for theme
 with open('./ui-theme/global.css') as f:
     css = f.read()
 st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
 
-st.title("Chatbot 💬")
-st.caption("A Streamlit chatbot powered by OpenAI 🚀")
+st.title("Chatbot 💬", anchor=False)
+
 if "messages" not in st.session_state:
     st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
 
@@ -20,7 +22,7 @@ for msg in st.session_state.messages:
 
 if prompt := st.chat_input():
     if not openai_api_key:
-        st.info("Please add your OpenAI API key to continue.")
+        st.info("Please add an OpenAI API key to continue.")
         st.stop()
 
     client = OpenAI(api_key=openai_api_key)
