@@ -8,7 +8,7 @@ st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
 # Remove anchor tags
 st.html("<style>[data-testid='stHeaderActionElements'] {display: none;}</style>")
 
-st.header("eduForge", anchor=False)
+st.title("eduForge", anchor=False)
 st.caption("AI ENHANCED LEARNING")
 
 st.divider()
