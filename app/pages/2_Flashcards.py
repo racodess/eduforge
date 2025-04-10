@@ -17,7 +17,7 @@ def init_db():
             name TEXT UNIQUE
         )
     ''')
-    # Updated cards table with SM-2 fields
+    # Updated cards table with SM‑2 fields and extra_fields JSON column.
     c.execute('''
         CREATE TABLE IF NOT EXISTS cards (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +28,7 @@ def init_db():
             interval REAL,
             repetition INTEGER,
             ef REAL,
+            extra_fields TEXT,
             FOREIGN KEY(deck_id) REFERENCES decks(id)
         )
     ''')
@@ -48,6 +49,8 @@ def update_db_schema():
         c.execute("ALTER TABLE cards ADD COLUMN repetition INTEGER DEFAULT 0")
     if "ef" not in columns:
         c.execute("ALTER TABLE cards ADD COLUMN ef REAL DEFAULT 2.5")
+    if "extra_fields" not in columns:
+        c.execute("ALTER TABLE cards ADD COLUMN extra_fields TEXT")
     
     conn.commit()
 
@@ -80,21 +83,23 @@ def get_cards(deck_id):
     return c.fetchall()
 
 def get_card_by_id(card_id):
-    c.execute("SELECT id, deck_id, front, back, next_review, interval, repetition, ef FROM cards WHERE id = ?", (card_id,))
+    c.execute("SELECT id, deck_id, front, back, next_review, interval, repetition, ef, extra_fields FROM cards WHERE id = ?", (card_id,))
     return c.fetchone()
 
-# New card additions include initial SM‑2 values.
-def add_card(deck_id, front, back):
-    c.execute("INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              (deck_id, front, back, None, 0, 0, 2.5))
+# New card additions include initial SM‑2 values and extra_fields.
+def add_card(deck_id, front, back, extra_fields=None):
+    extra_fields_json = json.dumps(extra_fields) if extra_fields else None
+    c.execute("INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef, extra_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              (deck_id, front, back, None, 0, 0, 2.5, extra_fields_json))
     conn.commit()
 
 def delete_card(card_id):
     c.execute("DELETE FROM cards WHERE id = ?", (card_id,))
     conn.commit()
 
-def update_card(card_id, front, back):
-    c.execute("UPDATE cards SET front = ?, back = ? WHERE id = ?", (front, back, card_id))
+def update_card(card_id, front, back, extra_fields=None):
+    extra_fields_json = json.dumps(extra_fields) if extra_fields else None
+    c.execute("UPDATE cards SET front = ?, back = ?, extra_fields = ? WHERE id = ?", (front, back, extra_fields_json, card_id))
     conn.commit()
 
 def trash_deck(deck_id):
@@ -141,18 +146,17 @@ def update_sm2(card_id, quality):
     card = get_card_by_id(card_id)
     if not card:
         return None, None, None, None
-    # card: (id, deck_id, front, back, next_review, interval, repetition, ef)
+    # card: (id, deck_id, front, back, next_review, interval, repetition, ef, extra_fields)
     interval = card[5] if card[5] is not None else 0
     repetition = card[6] if card[6] is not None else 0
     ef = card[7] if card[7] is not None else 2.5
 
     if quality < 3:
         # Failed review: count as a review attempt.
-        # If the card is new (repetition == 0), mark it as reviewed by setting repetition to 1.
         if repetition == 0:
             repetition = 1
         else:
-            repetition = 1  # Always set to 1 on a failed review to count it as reviewed.
+            repetition = 1
         interval = 1 / 1440  # 1 minute (in days)
         next_review = now + timedelta(minutes=1)
     else:
@@ -161,7 +165,6 @@ def update_sm2(card_id, quality):
             new_ef = 1.3
         ef = new_ef
         if repetition == 0:
-            # New card: use learning step intervals.
             repetition = 1
             if quality == 3:
                 interval = 6 / 1440  # 6 minutes
@@ -233,6 +236,31 @@ def format_interval_short(td):
     else:
         return f"<{td.days}d"
 
+# ------------- Field Editor UI -------------
+def render_edit_fields(deck_id):
+    st.markdown("### Edit Card Fields")
+    # Use a copy so that if we remove an item, it won't affect our iteration.
+    for i, field in enumerate(st.session_state.deck_fields[deck_id].copy()):
+        col1, col2 = st.columns([4, 1])
+        if field in ["Front", "Back"]:
+            # Mandatory fields cannot be changed or removed.
+            col1.text_input(f"Field {i+1} (Mandatory)", value=field, key=f"edit_field_{deck_id}_{i}", disabled=True)
+        else:
+            new_val = col1.text_input(f"Field {i+1}", value=field, key=f"edit_field_{deck_id}_{i}")
+            # Update the field value in session state.
+            st.session_state.deck_fields[deck_id][i] = new_val
+            if col2.button("Delete", key=f"delete_field_{deck_id}_{i}"):
+                st.session_state.deck_fields[deck_id].pop(i)
+                st.rerun()
+    new_field = st.text_input("New Field Name", key=f"new_field_input_{deck_id}")
+    if st.button("Add Field", key=f"add_field_button_{deck_id}"):
+        if new_field and new_field not in st.session_state.deck_fields[deck_id]:
+            st.session_state.deck_fields[deck_id].append(new_field)
+            st.rerun()
+    if st.button("Done Editing Fields", key=f"done_edit_fields_{deck_id}"):
+        st.session_state.edit_fields = False
+        st.rerun()
+
 # ------------- Session State Setup -------------
 if "selected_deck_id" not in st.session_state:
     st.session_state.selected_deck_id = None
@@ -255,6 +283,10 @@ if "review_edit_mode" not in st.session_state:
 
 if "selected_stats_card_id" not in st.session_state:
     st.session_state.selected_stats_card_id = None
+
+# For managing card field definitions per deck.
+if "deck_fields" not in st.session_state:
+    st.session_state.deck_fields = {}
 
 # ------------- Deck List View -------------
 def render_deck_list():
@@ -347,8 +379,8 @@ def render_deck_list():
                         for card in cards_list:
                             front = card.get("front", "")
                             back = card.get("back", "")
-                            c.execute("INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                      (new_deck_id, front, back, None, 0, 0, 2.5))
+                            c.execute("INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef, extra_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                      (new_deck_id, front, back, None, 0, 0, 2.5, None))
                         conn.commit()
                         st.success(f"Deck '{imported_deck_name}' imported successfully!")
                         st.rerun()
@@ -391,6 +423,15 @@ def render_deck_detail(deck_id):
             st.session_state.deck_pending_reset = None
             st.rerun()
 
+    # Initialize deck field definitions (mandatory fields plus any custom ones)
+    if deck_id not in st.session_state.deck_fields:
+        st.session_state.deck_fields[deck_id] = ["Front", "Back"]
+
+    # If the user is editing card fields, show the dialogue and skip the add/edit form.
+    if st.session_state.get("edit_fields", False):
+        render_edit_fields(deck_id)
+        return
+
     if st.session_state.get("selected_card_id") is not None:
         editing = True
         card_to_edit = get_card_by_id(st.session_state.selected_card_id)
@@ -405,27 +446,51 @@ def render_deck_detail(deck_id):
         pre_front = ""
         pre_back = ""
 
+    extra_data = {}
+    if editing and card_to_edit:
+        if card_to_edit[8]:
+            try:
+                extra_data = json.loads(card_to_edit[8])
+            except:
+                extra_data = {}
+
     with st.form("add_card_form", clear_on_submit=True):
-        front_text = st.text_area("Front", value=pre_front, placeholder="Enter question or prompt here")
-        back_text = st.text_area("Back", value=pre_back, placeholder="Enter answer or explanation here")
-        _, submit_btn_col = st.columns([3, 1])
+        # Dynamically generate form inputs for each card field.
+        card_values = {}
+        for field in st.session_state.deck_fields[deck_id]:
+            if field == "Front":
+                card_values["Front"] = st.text_area("Front", value=pre_front, placeholder="Enter question or prompt here", key="card_field_front")
+            elif field == "Back":
+                card_values["Back"] = st.text_area("Back", value=pre_back, placeholder="Enter answer or explanation here", key="card_field_back")
+            else:
+                card_values[field] = st.text_area(field, value=extra_data.get(field, ""), placeholder=f"Enter {field} here", key=f"card_field_{field}")
+        # Place the Add/Update button all the way to the left and the Edit Fields button immediately to its right.
+        btn_cols = st.columns([1, 1])
         if editing:
-            submitted = submit_btn_col.form_submit_button("Update Card")
+            submitted = btn_cols[0].form_submit_button("Update Card")
         else:
-            submitted = submit_btn_col.form_submit_button("Add Card")
+            submitted = btn_cols[0].form_submit_button("Add Card")
+        edit_pressed = btn_cols[1].form_submit_button("Edit Fields")
+        if edit_pressed:
+            st.session_state.edit_fields = True
+            st.rerun()
         if submitted:
-            if front_text.strip() and back_text.strip():
+            if card_values["Front"].strip() and card_values["Back"].strip():
+                extra_fields_data = {}
+                for key, value in card_values.items():
+                    if key not in ["Front", "Back"]:
+                        extra_fields_data[key] = value.strip()
                 if editing:
-                    update_card(st.session_state.selected_card_id, front_text.strip(), back_text.strip())
+                    update_card(st.session_state.selected_card_id, card_values["Front"].strip(), card_values["Back"].strip(), extra_fields_data)
                     st.success("Flashcard updated!")
                     st.session_state.selected_card_id = None
                     st.rerun()
                 else:
-                    add_card(deck_id, front_text.strip(), back_text.strip())
+                    add_card(deck_id, card_values["Front"].strip(), card_values["Back"].strip(), extra_fields_data)
                     st.success("Flashcard added!")
                     st.rerun()
             else:
-                st.error("Please provide both front and back text.")
+                st.error("Please provide both Front and Back text.")
 
     st.divider()
 
@@ -460,7 +525,7 @@ def render_deck_detail(deck_id):
             if st.session_state.get("selected_stats_card_id") == card_id:
                 card_full = get_card_by_id(card_id)
                 if card_full:
-                    _, _, _, _, next_review, interval, repetition, ef = card_full
+                    _, _, _, _, next_review, interval, repetition, ef, _ = card_full
                     if next_review:
                         nr_display = datetime.fromisoformat(next_review).strftime("%Y-%m-%d %H:%M:%S")
                     else:
@@ -502,7 +567,6 @@ def render_deck_review(deck_id):
         unsafe_allow_html=True
     )
     
-    # If there are no due or new cards, show congratulations.
     if stats["new"] == 0 and stats["due"] == 0:
         st.success("Congratulations! You have completed your review.")
         return
@@ -521,7 +585,7 @@ def render_deck_review(deck_id):
     if not card:
         st.error("Selected card not found.")
         return
-    card_id, _, front, back, next_review, interval, repetition, ef = card
+    card_id, _, front, back, next_review, interval, repetition, ef, _ = card
 
     if st.session_state.review_edit_mode:
         with st.form("edit_review_form", clear_on_submit=False):
@@ -554,21 +618,17 @@ def render_deck_review(deck_id):
         st.write(back)
         st.divider()
         
-        # Calculate projected intervals for each SM‑2 rating.
         proj_again = format_interval_short(project_interval(card, 0))
         proj_hard  = format_interval_short(project_interval(card, 3))
         proj_good  = format_interval_short(project_interval(card, 4))
         proj_easy  = format_interval_short(project_interval(card, 5))
         
-        # Create header row for projected intervals so the Edit button is aligned.
         header_cols = st.columns([2, 1, 1, 1, 1])
-        # No header for Edit, but for the others we display the projected intervals.
         header_cols[1].markdown(proj_again, unsafe_allow_html=True)
         header_cols[2].markdown(proj_hard, unsafe_allow_html=True)
         header_cols[3].markdown(proj_good, unsafe_allow_html=True)
         header_cols[4].markdown(proj_easy, unsafe_allow_html=True)
         
-        # Create a row of buttons with the Edit button on the same row.
         btn_cols = st.columns([2, 1, 1, 1, 1])
         if btn_cols[0].button("Edit", key="edit_card"):
             st.session_state.review_edit_mode = True
