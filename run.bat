@@ -1,1 +1,1 @@
-streamlit run %cd%\app\0_Menu.py
+streamlit run %cd%\app\0_Updates.py
