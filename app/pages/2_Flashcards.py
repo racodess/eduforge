@@ -2,7 +2,6 @@ import streamlit as st
 import sqlite3
 import os
 import json
-import time  # For delaying review feedback (no longer used for SM‑2 buttons)
 from datetime import datetime, timedelta
 
 # ------------- Database Setup -------------
@@ -132,11 +131,6 @@ def format_timedelta(delta):
 
 # ------------- SM‑2 Functions -------------
 
-# The updated SM‑2 function applies different multipliers based on quality.
-# For new cards (repetition == 0), we use learning steps:
-#   - Hard: 6 minutes, Good: 10 minutes, Easy: 2 days.
-# For subsequent reviews, we use multipliers:
-#   - Hard: base * ef * 0.9, Good: base * ef, Easy: base * ef * 1.3.
 def update_sm2(card_id, quality):
     """
     quality: integer rating
@@ -222,7 +216,6 @@ def project_interval(card, quality):
                 new_interval = round(base * new_ef * 1.3)
             return timedelta(days=new_interval)
 
-# Helper: Format a timedelta into a short string (e.g. "<6m" or "<2d").
 def format_interval_short(td):
     total_minutes = td.total_seconds() / 60
     if total_minutes < 60:
@@ -236,41 +229,176 @@ def format_interval_short(td):
     else:
         return f"<{td.days}d"
 
-# ------------- Field Editor UI -------------
-def render_edit_fields(deck_id):
-    st.markdown("### Edit Card Fields")
-    # Use a copy so that if we remove an item, it won't affect our iteration.
-    for i, field in enumerate(st.session_state.deck_fields[deck_id].copy()):
-        col1, col2 = st.columns([4, 1])
-        if field in ["Front", "Back"]:
-            # Mandatory fields cannot be changed or removed.
-            col1.text_input(f"Field {i+1} (Mandatory)", value=field, key=f"edit_field_{deck_id}_{i}", disabled=True)
-        else:
-            new_val = col1.text_input(f"Field {i+1}", value=field, key=f"edit_field_{deck_id}_{i}")
-            # Update the field value in session state.
-            st.session_state.deck_fields[deck_id][i] = new_val
-            if col2.button("Delete", key=f"delete_field_{deck_id}_{i}"):
-                st.session_state.deck_fields[deck_id].pop(i)
-                st.rerun()
-    new_field = st.text_input("New Field Name", key=f"new_field_input_{deck_id}")
-    if st.button("Add Field", key=f"add_field_button_{deck_id}"):
-        if new_field and new_field not in st.session_state.deck_fields[deck_id]:
-            st.session_state.deck_fields[deck_id].append(new_field)
+# ------------- Reusable Visual / UI Components -------------
+
+def render_card_visual(front, back, extras=None, show_back=False):
+    """
+    Renders the 'visual' portion of a card:
+      - Always shows the Front (title + text).
+      - Optionally shows the Back (controlled by show_back).
+      - Optionally shows any extra fields (extras dict).
+    """
+    # Front
+    st.markdown("<h1 style='text-align:center;'>Front</h1>", unsafe_allow_html=True)
+    st.write(front)
+
+    # If we should also show the back
+    if show_back:
+        st.divider()
+        st.markdown("<h1 style='text-align:center;'>Back</h1>", unsafe_allow_html=True)
+        st.write(back)
+
+    # If extras exist, show them below
+    if extras and len(extras) > 0:
+        st.divider()
+        for field_name, field_value in extras.items():
+            st.markdown(f"**{field_name}:**")
+            st.markdown(field_value)
+
+def render_deck_row(deck_id, deck_name, stats):
+    """
+    Renders a single row (in the deck list) showing:
+      - deck name
+      - stats (new, learn, due)
+      - 'Review', 'Browse', 'Export', 'Delete' actions
+    """
+    row_cols = st.columns([2, 1, 1, 1, 6])
+    row_cols[0].write(deck_name)
+    row_cols[1].write(stats["new"])
+    row_cols[2].write(stats["learn"])
+    row_cols[3].write(stats["due"])
+
+    with row_cols[4]:
+        action_cols = st.columns(4)
+        if action_cols[0].button("Review", key=f"review_deck_{deck_id}"):
+            st.session_state.selected_deck_id = deck_id
+            st.session_state.selected_deck_mode = "review"
+            st.session_state.review_card_id = None
+            st.session_state.review_show_answer = False
+            st.session_state.review_edit_mode = False
             st.rerun()
-    if st.button("Done Editing Fields", key=f"done_edit_fields_{deck_id}"):
-        st.session_state.edit_fields = False
-        st.rerun()
+        if action_cols[1].button("Browse", key=f"browse_deck_{deck_id}"):
+            st.session_state.selected_deck_id = deck_id
+            st.session_state.selected_deck_mode = "browse"
+            st.rerun()
+
+        # Export
+        cards_data = get_cards(deck_id)
+        deck_data = {
+            "name": deck_name,
+            "cards": [{"front": card[1], "back": card[2]} for card in cards_data]
+        }
+        deck_json = json.dumps(deck_data, indent=2)
+        action_cols[2].download_button(
+            "Export", deck_json,
+            file_name=f"{deck_name}.json",
+            mime="application/json",
+            key=f"export_deck_{deck_id}"
+        )
+
+        # Delete
+        if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}"):
+            st.session_state.deck_pending_delete = deck_id
+            st.rerun()
+
+def render_card_form(deck_id, editing=False, card_data=None):
+    """
+    Renders a form for adding or editing a card in the given deck_id.
+    If editing=True and card_data is given, fields are pre-populated.
+    """
+    if editing and card_data:
+        pre_front = card_data[2]  # front
+        pre_back = card_data[3]   # back
+        extra_json = card_data[8]
+        if extra_json:
+            try:
+                extra_data = json.loads(extra_json)
+            except:
+                extra_data = {}
+        else:
+            extra_data = {}
+    else:
+        pre_front = ""
+        pre_back = ""
+        extra_data = {}
+
+    # Build dynamic fields from st.session_state.deck_fields[deck_id]
+    card_values = {}
+    with st.form("add_card_form", clear_on_submit=True):
+        for field in st.session_state.deck_fields[deck_id]:
+            if field == "Front":
+                card_values["Front"] = st.text_area(
+                    "Front",
+                    value=pre_front,
+                    placeholder="Enter question or prompt here",
+                    key="card_field_front"
+                )
+            elif field == "Back":
+                card_values["Back"] = st.text_area(
+                    "Back",
+                    value=pre_back,
+                    placeholder="Enter answer or explanation here",
+                    key="card_field_back"
+                )
+            else:
+                card_values[field] = st.text_area(
+                    field,
+                    value=extra_data.get(field, ""),
+                    placeholder=f"Enter {field} here",
+                    key=f"card_field_{field}"
+                )
+
+        # Form buttons
+        btn_cols = st.columns([1, 1])
+        if editing:
+            submit_label = "Update Card"
+        else:
+            submit_label = "Add Card"
+        submitted = btn_cols[0].form_submit_button(submit_label)
+        edit_pressed = btn_cols[1].form_submit_button("Edit Fields")
+
+        if edit_pressed:
+            st.session_state.edit_fields = True
+            st.rerun()
+
+        if submitted:
+            # Validate front/back
+            if card_values["Front"].strip() and card_values["Back"].strip():
+                extra_fields_data = {}
+                for key, value in card_values.items():
+                    if key not in ["Front", "Back"]:
+                        extra_fields_data[key] = value.strip()
+
+                if editing and card_data:
+                    card_id = card_data[0]
+                    update_card(
+                        card_id,
+                        card_values["Front"].strip(),
+                        card_values["Back"].strip(),
+                        extra_fields_data
+                    )
+                    st.success("Flashcard updated!")
+                    st.session_state.selected_card_id = None
+                    st.rerun()
+                else:
+                    add_card(
+                        deck_id,
+                        card_values["Front"].strip(),
+                        card_values["Back"].strip(),
+                        extra_fields_data
+                    )
+                    st.success("Flashcard added!")
+                    st.rerun()
+            else:
+                st.error("Please provide both Front and Back text.")
 
 # ------------- Session State Setup -------------
 if "selected_deck_id" not in st.session_state:
     st.session_state.selected_deck_id = None
-
 if "selected_deck_mode" not in st.session_state:
     st.session_state.selected_deck_mode = None  # "browse" or "review"
-
 if "deck_pending_delete" not in st.session_state:
     st.session_state.deck_pending_delete = None
-
 if "deck_pending_reset" not in st.session_state:
     st.session_state.deck_pending_reset = None
 
@@ -288,65 +416,40 @@ if "selected_stats_card_id" not in st.session_state:
 if "deck_fields" not in st.session_state:
     st.session_state.deck_fields = {}
 
+# We add two new session states for "View" mode in the Browse screen.
+if "view_card_id" not in st.session_state:
+    st.session_state.view_card_id = None
+if "view_show_answer" not in st.session_state:
+    st.session_state.view_show_answer = False
+
 # ------------- Deck List View -------------
 def render_deck_list():
     decks = get_decks()
     if decks:
+        # Header
         header_cols = st.columns([2, 1, 1, 1, 6])
         header_cols[0].markdown("**Deck**")
         header_cols[1].markdown("**New**")
         header_cols[2].markdown("**Learn**")
         header_cols[3].markdown("**Due**")
-        
+
+        # For each deck, we use our reusable row
         for deck_id, deck_name in decks:
-            with st.container():
-                row_cols = st.columns([2, 1, 1, 1, 6])
-                row_cols[0].write(deck_name)
-                stats = get_deck_stats(deck_id)
-                row_cols[1].write(stats["new"])
-                row_cols[2].write(stats["learn"])
-                row_cols[3].write(stats["due"])
-                
-                with row_cols[4]:
-                    action_cols = st.columns(4)
-                    if action_cols[0].button("Review", key=f"review_deck_{deck_id}"):
-                        st.session_state.selected_deck_id = deck_id
-                        st.session_state.selected_deck_mode = "review"
-                        st.session_state.review_card_id = None
-                        st.session_state.review_show_answer = False
-                        st.session_state.review_edit_mode = False
-                        st.rerun()
-                    if action_cols[1].button("Browse", key=f"browse_deck_{deck_id}"):
-                        st.session_state.selected_deck_id = deck_id
-                        st.session_state.selected_deck_mode = "browse"
-                        st.rerun()
-                    cards_data = get_cards(deck_id)
-                    deck_data = {
-                        "name": deck_name,
-                        "cards": [{"front": card[1], "back": card[2]} for card in cards_data]
-                    }
-                    deck_json = json.dumps(deck_data, indent=2)
-                    action_cols[2].download_button(
-                        "Export", deck_json,
-                        file_name=f"{deck_name}.json",
-                        mime="application/json",
-                        key=f"export_deck_{deck_id}"
-                    )
-                    if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}"):
-                        st.session_state.deck_pending_delete = deck_id
-                        st.rerun()
-                        
-                if st.session_state.deck_pending_delete == deck_id:
-                    st.info("Are you sure you want to delete this deck?")
-                    confirm_cols = st.columns(2)
-                    if confirm_cols[0].button("Yes", key=f"confirm_delete_yes_{deck_id}"):
-                        trash_deck(deck_id)
-                        st.success(f"Deck '{deck_name}' deleted!")
-                        st.session_state.deck_pending_delete = None
-                        st.rerun()
-                    if confirm_cols[1].button("No", key=f"confirm_delete_no_{deck_id}"):
-                        st.session_state.deck_pending_delete = None
-                        st.rerun()
+            stats = get_deck_stats(deck_id)
+            render_deck_row(deck_id, deck_name, stats)
+
+            # If user pressed "Delete"
+            if st.session_state.deck_pending_delete == deck_id:
+                st.info("Are you sure you want to delete this deck?")
+                confirm_cols = st.columns(2)
+                if confirm_cols[0].button("Yes", key=f"confirm_delete_yes_{deck_id}"):
+                    trash_deck(deck_id)
+                    st.success(f"Deck '{deck_name}' deleted!")
+                    st.session_state.deck_pending_delete = None
+                    st.rerun()
+                if confirm_cols[1].button("No", key=f"confirm_delete_no_{deck_id}"):
+                    st.session_state.deck_pending_delete = None
+                    st.rerun()
     else:
         st.info("No decks found. Create one below.")
 
@@ -379,8 +482,10 @@ def render_deck_list():
                         for card in cards_list:
                             front = card.get("front", "")
                             back = card.get("back", "")
-                            c.execute("INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef, extra_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                      (new_deck_id, front, back, None, 0, 0, 2.5, None))
+                            c.execute(
+                                "INSERT INTO cards (deck_id, front, back, next_review, interval, repetition, ef, extra_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (new_deck_id, front, back, None, 0, 0, 2.5, None)
+                            )
                         conn.commit()
                         st.success(f"Deck '{imported_deck_name}' imported successfully!")
                         st.rerun()
@@ -411,6 +516,7 @@ def render_deck_detail(deck_id):
     if top_row[2].button("Reset Deck"):
         st.session_state.deck_pending_reset = deck_id
         st.rerun()
+
     if st.session_state.deck_pending_reset == deck_id:
         st.info("Are you sure you want to permanently reset the SM‑2 stats (New, Learn, Due) for this deck?")
         confirm_cols = st.columns(2)
@@ -427,101 +533,99 @@ def render_deck_detail(deck_id):
     if deck_id not in st.session_state.deck_fields:
         st.session_state.deck_fields[deck_id] = ["Front", "Back"]
 
-    # If the user is editing card fields, show the dialogue and skip the add/edit form.
+    # If the user is editing card fields, show that UI and skip the rest.
     if st.session_state.get("edit_fields", False):
         render_edit_fields(deck_id)
         return
 
+    # If the user is in "View" mode for a particular card, show that preview instead of the Add/Edit form.
+    if st.session_state.view_card_id:
+        card_to_view = get_card_by_id(st.session_state.view_card_id)
+        if card_to_view:
+            _, _, front, back, _, _, _, _, extra_json = card_to_view
+            extras = {}
+            if extra_json:
+                try:
+                    extras = json.loads(extra_json)
+                except:
+                    extras = {}
+
+            # Reuse the visual component
+            render_card_visual(front, back, extras=extras, show_back=True)
+
+            # Single "Done" button
+            if st.button("Done"):
+                st.session_state.view_card_id = None
+                st.session_state.view_show_answer = False
+            return
+        else:
+            # If card no longer exists, just clear view mode
+            st.session_state.view_card_id = None
+            st.session_state.view_show_answer = False
+
+    # Normal Add/Edit form logic
     if st.session_state.get("selected_card_id") is not None:
         editing = True
         card_to_edit = get_card_by_id(st.session_state.selected_card_id)
-        if card_to_edit:
-            pre_front = card_to_edit[2]
-            pre_back = card_to_edit[3]
-        else:
-            pre_front = ""
-            pre_back = ""
     else:
         editing = False
-        pre_front = ""
-        pre_back = ""
+        card_to_edit = None
 
-    extra_data = {}
-    if editing and card_to_edit:
-        if card_to_edit[8]:
-            try:
-                extra_data = json.loads(card_to_edit[8])
-            except:
-                extra_data = {}
-
-    with st.form("add_card_form", clear_on_submit=True):
-        # Dynamically generate form inputs for each card field.
-        card_values = {}
-        for field in st.session_state.deck_fields[deck_id]:
-            if field == "Front":
-                card_values["Front"] = st.text_area("Front", value=pre_front, placeholder="Enter question or prompt here", key="card_field_front")
-            elif field == "Back":
-                card_values["Back"] = st.text_area("Back", value=pre_back, placeholder="Enter answer or explanation here", key="card_field_back")
-            else:
-                card_values[field] = st.text_area(field, value=extra_data.get(field, ""), placeholder=f"Enter {field} here", key=f"card_field_{field}")
-        # Place the Add/Update button all the way to the left and the Edit Fields button immediately to its right.
-        btn_cols = st.columns([1, 1])
-        if editing:
-            submitted = btn_cols[0].form_submit_button("Update Card")
-        else:
-            submitted = btn_cols[0].form_submit_button("Add Card")
-        edit_pressed = btn_cols[1].form_submit_button("Edit Fields")
-        if edit_pressed:
-            st.session_state.edit_fields = True
-            st.rerun()
-        if submitted:
-            if card_values["Front"].strip() and card_values["Back"].strip():
-                extra_fields_data = {}
-                for key, value in card_values.items():
-                    if key not in ["Front", "Back"]:
-                        extra_fields_data[key] = value.strip()
-                if editing:
-                    update_card(st.session_state.selected_card_id, card_values["Front"].strip(), card_values["Back"].strip(), extra_fields_data)
-                    st.success("Flashcard updated!")
-                    st.session_state.selected_card_id = None
-                    st.rerun()
-                else:
-                    add_card(deck_id, card_values["Front"].strip(), card_values["Back"].strip(), extra_fields_data)
-                    st.success("Flashcard added!")
-                    st.rerun()
-            else:
-                st.error("Please provide both Front and Back text.")
+    # Use our reusable form function
+    render_card_form(deck_id, editing, card_to_edit)
 
     st.divider()
 
+    # Now display the list of cards
     cards_data = get_cards(deck_id)
     if not cards_data:
         st.info("No cards to display.")
         return
+
     center_cols = st.columns([1, 6])
     with center_cols[1]:
-        header_cols = st.columns([1, 2, 1, 1, 1])
+        # We now add an extra column for the "View" button.
+        header_cols = st.columns([1, 2, 1, 1, 1, 1])
         header_cols[0].markdown("**ID**")
         header_cols[1].markdown("**Front**")
+
         for card in cards_data:
             card_id, front, back = card
-            row_cols = st.columns([1, 2, 1, 1, 1])
+            row_cols = st.columns([1, 2, 1, 1, 1, 1])
             row_cols[0].write(card_id)
             row_cols[1].write(front)
-            if row_cols[2].button("Edit", key=f"select_{card_id}"):
+
+            # View button
+            if row_cols[2].button("View", key=f"view_{card_id}"):
+                if st.session_state.view_card_id == card_id:
+                    # Clicking "View" again toggles it off
+                    st.session_state.view_card_id = None
+                    st.session_state.view_show_answer = False
+                else:
+                    st.session_state.view_card_id = card_id
+                    st.session_state.view_show_answer = False
+                st.rerun()
+
+            # Edit button
+            if row_cols[3].button("Edit", key=f"select_{card_id}"):
                 st.session_state.selected_card_id = card_id
                 st.rerun()
-            if row_cols[3].button("Stats" if st.session_state.get("selected_stats_card_id") == card_id else "Stats",
-                                  key=f"stats_{card_id}"):
+
+            # Stats button
+            if row_cols[4].button("Stats", key=f"stats_{card_id}"):
                 if st.session_state.get("selected_stats_card_id") == card_id:
                     st.session_state.selected_stats_card_id = None
                 else:
                     st.session_state.selected_stats_card_id = card_id
                 st.rerun()
-            if row_cols[4].button("Delete", key=f"delete_{card_id}"):
+
+            # Delete button
+            if row_cols[5].button("Delete", key=f"delete_{card_id}"):
                 delete_card(card_id)
                 st.success("Card deleted!")
                 st.rerun()
+
+            # If Stats is expanded for this card
             if st.session_state.get("selected_stats_card_id") == card_id:
                 card_full = get_card_by_id(card_id)
                 if card_full:
@@ -585,9 +689,10 @@ def render_deck_review(deck_id):
     if not card:
         st.error("Selected card not found.")
         return
-    card_id, _, front, back, next_review, interval, repetition, ef, _ = card
+    card_id, _, front, back, next_review, interval, repetition, ef, extra_json = card
 
     if st.session_state.review_edit_mode:
+        # Reuse the form for editing inside the review (just pass 'editing=True')
         with st.form("edit_review_form", clear_on_submit=False):
             new_front = st.text_area("Edit Front", value=front)
             new_back = st.text_area("Edit Back", value=back)
@@ -605,19 +710,30 @@ def render_deck_review(deck_id):
                 st.rerun()
         return
 
-    st.subheader("Front")
-    st.write(front)
+    # Parse extras if any
+    extras = {}
+    if extra_json:
+        try:
+            extras = json.loads(extra_json)
+        except:
+            extras = {}
+
+    # Use the reusable card-visual function
+    render_card_visual(
+        front=front,
+        back=back,
+        extras=extras,
+        show_back=st.session_state.review_show_answer
+    )
+
     st.divider()
-    
+    # "Show Answer" logic
     if not st.session_state.review_show_answer:
         if st.button("Show Answer"):
             st.session_state.review_show_answer = True
             st.rerun()
     else:
-        st.subheader("Back")
-        st.write(back)
-        st.divider()
-        
+        # SM-2 rating buttons
         proj_again = format_interval_short(project_interval(card, 0))
         proj_hard  = format_interval_short(project_interval(card, 3))
         proj_good  = format_interval_short(project_interval(card, 4))
@@ -654,7 +770,6 @@ def render_deck_review(deck_id):
                 go_to_next_card(deck_id)
                 st.rerun()
 
-# New helper: Move to the next card in the deck.
 def go_to_next_card(deck_id):
     cards_data = get_cards(deck_id)
     if not cards_data:
