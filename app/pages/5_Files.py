@@ -3,7 +3,7 @@
 import streamlit as st
 import os
 
-from utils.ai_file_manager import AIFileManager
+from eduforge.app.utils.global_file_manager import AIFileManager
 
 def main():
     st.title("File Manager")
@@ -24,7 +24,7 @@ def main():
                 st.success(f"File '{filename}' uploaded successfully!")
             else:
                 st.error("Unsupported file type or error saving file.")
-            st.experimental_rerun()
+            st.rerun()
 
     st.markdown("---")
 
@@ -41,7 +41,7 @@ def main():
             if col2.button("Delete", key=f"del_{f}"):
                 file_manager.delete_file(f)
                 st.warning(f"File '{f}' has been deleted.")
-                st.experimental_rerun()
+                st.rerun()
 
 if __name__ == "__main__":
     main()

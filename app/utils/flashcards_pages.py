@@ -6,7 +6,7 @@ import streamlit as st
 
 from utils.flashcards_db import (
     get_decks, create_deck, trash_deck, reset_deck, get_deck_stats,
-    get_cards, get_card_by_id, delete_card, update_card
+    get_cards, get_card_by_id, delete_card, update_card, add_card
 )
 from utils.flashcards_sm2 import update_sm2, project_interval, format_interval_short
 from utils.flashcards_ui import render_card_visual, render_card_form
@@ -55,7 +55,6 @@ def render_deck_row(deck_id, deck_name, stats):
         if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}"):
             st.session_state.deck_pending_delete = deck_id
             st.rerun()
-
 
 def render_deck_list():
     decks = get_decks()
@@ -133,12 +132,10 @@ def render_deck_list():
             st.error("Please select a deck file to import.")
 
     st.divider()
-    render_ai_import_section(deck_id)
-
+    render_ai_import_section(st.session_state.selected_deck_id)
 
 def render_edit_fields(deck_id):
     st.markdown("### Edit Card Fields")
-    # Copy the fields list to avoid mutating while iterating
     for i, field in enumerate(st.session_state.deck_fields[deck_id].copy()):
         col1, col2 = st.columns([4, 1])
         if field in ["Front", "Back"]:
@@ -169,7 +166,6 @@ def render_edit_fields(deck_id):
         st.session_state.edit_fields = False
         st.rerun()
 
-
 def render_deck_detail(deck_id):
     from utils.flashcards_db import c
     c.execute("SELECT name FROM decks WHERE id = ?", (deck_id,))
@@ -182,7 +178,6 @@ def render_deck_detail(deck_id):
     deck_name = row[0]
     top_row = st.columns([2, 8, 2])
 
-    # Go back to deck list
     if top_row[0].button("Back"):
         st.session_state.selected_deck_id = None
         st.session_state.selected_deck_mode = None
@@ -190,7 +185,6 @@ def render_deck_detail(deck_id):
 
     top_row[1].markdown(f"<h2 style='text-align:left;'>{deck_name}</h2>", unsafe_allow_html=True)
 
-    # Reset deck’s SM-2 stats
     if top_row[2].button("Reset Deck"):
         st.session_state.deck_pending_reset = deck_id
         st.rerun()
@@ -207,16 +201,13 @@ def render_deck_detail(deck_id):
             st.session_state.deck_pending_reset = None
             st.rerun()
 
-    # Initialize deck field definitions if not present
     if deck_id not in st.session_state.deck_fields:
         st.session_state.deck_fields[deck_id] = ["Front", "Back"]
 
-    # If user is editing fields
     if st.session_state.get("edit_fields", False):
         render_edit_fields(deck_id)
         return
 
-    # Viewing a single card in “View” mode
     if st.session_state.view_card_id:
         card_to_view = get_card_by_id(st.session_state.view_card_id)
         if card_to_view:
@@ -233,11 +224,9 @@ def render_deck_detail(deck_id):
                 st.session_state.view_show_answer = False
             return
         else:
-            # Card not found or removed
             st.session_state.view_card_id = None
             st.session_state.view_show_answer = False
 
-    # Normal form for adding or editing
     if st.session_state.get("selected_card_id") is not None:
         editing = True
         card_to_edit = get_card_by_id(st.session_state.selected_card_id)
@@ -248,7 +237,6 @@ def render_deck_detail(deck_id):
     render_card_form(deck_id, editing, card_to_edit)
     st.divider()
 
-    # List all cards in this deck
     cards_data = get_cards(deck_id)
     if not cards_data:
         st.info("No cards to display.")
@@ -264,8 +252,6 @@ def render_deck_detail(deck_id):
             row_cols = st.columns([1, 2, 1, 1, 1, 1])
             row_cols[0].write(card_id)
             row_cols[1].write(front)
-
-            # View
             if row_cols[2].button("View", key=f"view_{card_id}"):
                 if st.session_state.view_card_id == card_id:
                     st.session_state.view_card_id = None
@@ -274,27 +260,20 @@ def render_deck_detail(deck_id):
                     st.session_state.view_card_id = card_id
                     st.session_state.view_show_answer = False
                 st.rerun()
-
-            # Edit
             if row_cols[3].button("Edit", key=f"select_{card_id}"):
                 st.session_state.selected_card_id = card_id
                 st.rerun()
-
-            # Stats
             if row_cols[4].button("Stats", key=f"stats_{card_id}"):
                 if st.session_state.get("selected_stats_card_id") == card_id:
                     st.session_state.selected_stats_card_id = None
                 else:
                     st.session_state.selected_stats_card_id = card_id
                 st.rerun()
-
-            # Delete
             if row_cols[5].button("Delete", key=f"delete_{card_id}"):
                 delete_card(card_id)
                 st.success("Card deleted!")
                 st.rerun()
 
-            # Show expanded stats if selected
             if st.session_state.get("selected_stats_card_id") == card_id:
                 card_full = get_card_by_id(card_id)
                 if card_full:
@@ -313,7 +292,6 @@ def render_deck_detail(deck_id):
                         unsafe_allow_html=True
                     )
 
-
 def go_to_next_card(deck_id):
     cards_data = get_cards(deck_id)
     if not cards_data:
@@ -327,7 +305,6 @@ def go_to_next_card(deck_id):
         st.session_state.review_show_answer = False
         st.session_state.review_edit_mode = False
 
-
 def render_deck_review(deck_id):
     from utils.flashcards_db import c
     c.execute("SELECT name FROM decks WHERE id = ?", (deck_id,))
@@ -338,7 +315,6 @@ def render_deck_review(deck_id):
         st.stop()
 
     deck_name = row[0]
-
     top_row = st.columns([2, 8])
     if top_row[0].button("Back"):
         st.session_state.selected_deck_id = None
@@ -354,7 +330,6 @@ def render_deck_review(deck_id):
         f"<p>New: {stats['new']} | Learn: {stats['learn']} | Due: {stats['due']}</p>",
         unsafe_allow_html=True
     )
-
     if stats["new"] == 0 and stats["due"] == 0:
         st.success("Congratulations! You have completed your review.")
         return
@@ -375,7 +350,6 @@ def render_deck_review(deck_id):
 
     card_id, _, front, back, next_review, interval, repetition, ef, extra_json = card
 
-    # Inline editing of a card during review
     if st.session_state.review_edit_mode:
         with st.form("edit_review_form", clear_on_submit=False):
             new_front = st.text_area("Edit Front", value=front)
@@ -394,7 +368,6 @@ def render_deck_review(deck_id):
                 st.rerun()
         return
 
-    # Otherwise, show card
     extras = {}
     if extra_json:
         try:
@@ -403,7 +376,6 @@ def render_deck_review(deck_id):
             extras = {}
 
     render_card_visual(front, back, extras=extras, show_back=st.session_state.review_show_answer)
-
     st.divider()
     if not st.session_state.review_show_answer:
         if st.button("Show Answer"):
@@ -414,19 +386,15 @@ def render_deck_review(deck_id):
         proj_hard  = format_interval_short(project_interval(card, 3))
         proj_good  = format_interval_short(project_interval(card, 4))
         proj_easy  = format_interval_short(project_interval(card, 5))
-
         header_cols = st.columns([2, 1, 1, 1, 1])
         header_cols[1].markdown(proj_again)
         header_cols[2].markdown(proj_hard)
         header_cols[3].markdown(proj_good)
         header_cols[4].markdown(proj_easy)
-
         btn_cols = st.columns([2, 1, 1, 1, 1])
-        # Inline edit
         if btn_cols[0].button("Edit", key="edit_card"):
             st.session_state.review_edit_mode = True
             st.rerun()
-
         with btn_cols[1]:
             if st.button("Again", key="again"):
                 update_sm2(card_id, 0)
@@ -453,24 +421,23 @@ def render_ai_import_section(deck_id: int):
     Adds a section where the user can upload a file, paste text, or provide a URL
     for generating new flashcards with AI.
     """
-
     st.subheader("Generate")
     st.write(
         "Generate flashcards from a file, pasted text, or a URL. "
         "This is useful if you have raw study material you'd like to turn into flashcards."
     )
 
-    # Create an instance of our AI importer
+    # Create an instance of our AI flashcard importer
     ai_importer = AIFlashcardImporter()
 
-    # 1) File uploader
+    # 1) File uploader (supporting .txt and .pdf)
     uploaded_file = st.file_uploader(
-        label="Upload a .txt file (optional)",
-        type=["txt"],  # or ["txt", "pdf"] if you want to handle PDFs later
+        label="Upload a .txt or .pdf file (optional)",
+        type=["txt", "pdf"],
         help="Provide a text file with the content you want to convert into flashcards."
     )
 
-    # 2) Text area
+    # 2) Text area for pasted content
     text_input = st.text_area(
         "Or paste text content here",
         "",
@@ -484,9 +451,7 @@ def render_ai_import_section(deck_id: int):
         help="If you want to pull text from a URL, enter it here."
     )
 
-    # Action button
     if st.button("Generate Flashcards"):
-        # Decide which source to process
         final_text = ""
         if uploaded_file is not None:
             final_text = ai_importer.process_file(uploaded_file)
@@ -499,16 +464,34 @@ def render_ai_import_section(deck_id: int):
             st.warning("No valid content provided. Please upload a file, paste text, or enter a URL.")
             return
 
-        # Call the AI logic to transform the text into flashcards
         generated_cards = ai_importer.generate_flashcards(final_text)
 
         if not generated_cards:
             st.info("No flashcards were generated (placeholder AI logic).")
         else:
             st.success(f"Generated {len(generated_cards)} flashcards!")
-            # Display a quick preview
             for i, card in enumerate(generated_cards, start=1):
                 st.markdown(f"**Flashcard {i}**")
                 st.write("Front:", card["front"])
                 st.write("Back:", card["back"])
                 st.divider()
+            
+            if st.button("Import Cards to Deck"):
+                for card in generated_cards:
+                    add_card(deck_id, card["front"], card["back"], extra_fields=None)
+                st.success("All generated flashcards have been imported to your deck!")
+                st.rerun()
+
+def main():
+    st.title("Flashcards")
+    
+    if st.session_state.selected_deck_id is None:
+        render_deck_list()
+    else:
+        if st.session_state.selected_deck_mode == "browse":
+            render_deck_detail(st.session_state.selected_deck_id)
+        elif st.session_state.selected_deck_mode == "review":
+            render_deck_review(st.session_state.selected_deck_id)
+
+if __name__ == "__main__":
+    main()
