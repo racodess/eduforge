@@ -8,9 +8,7 @@ import re
 from utils.flashcards_db import update_card, add_card
 from utils.flashcards_sm2 import project_interval, format_interval_short
 
-# -------------------------------------------------------------------
 # Regex / Helper functions for base64 image handling
-# -------------------------------------------------------------------
 IMAGE_PATTERN = re.compile(
     r"!\[.*?\]\((data:image/(?:png|jpe?g|gif);base64,.*?)\)",
     flags=re.IGNORECASE | re.DOTALL
@@ -32,9 +30,7 @@ def remove_base64_image_from_text(text: str, data_uri: str):
     return re.sub(pattern, "", text)
 
 
-# -------------------------------------------------------------------
 # Rendering a card's front/back + extras with st.image where needed
-# -------------------------------------------------------------------
 def render_card_visual(front, back, extras=None, show_back=False):
     """
     Renders the card's front, and optionally back + extras.
@@ -70,9 +66,7 @@ def render_card_visual(front, back, extras=None, show_back=False):
                 st.image(img)
 
 
-# -------------------------------------------------------------------
 # Main form: Add/Edit a card
-# -------------------------------------------------------------------
 def render_card_form(deck_id, editing=False, card_data=None, allow_image_attach=False):
     """
     Renders a form for adding or editing a card.

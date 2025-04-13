@@ -10,7 +10,7 @@ from utils.flashcards_db import (
 )
 from utils.flashcards_sm2 import update_sm2, project_interval, format_interval_short
 from utils.flashcards_ui import render_card_visual, render_card_form
-
+from utils.flashcards_ai import AIFlashcardImporter
 
 def render_deck_row(deck_id, deck_name, stats):
     row_cols = st.columns([2, 1, 1, 1, 6])
@@ -131,6 +131,9 @@ def render_deck_list():
                 st.error(f"Error importing deck: {e}")
         else:
             st.error("Please select a deck file to import.")
+
+    st.divider()
+    render_ai_import_section(deck_id)
 
 
 def render_edit_fields(deck_id):
@@ -444,3 +447,68 @@ def render_deck_review(deck_id):
                 update_sm2(card_id, 5)
                 go_to_next_card(deck_id)
                 st.rerun()
+
+def render_ai_import_section(deck_id: int):
+    """
+    Adds a section where the user can upload a file, paste text, or provide a URL
+    for generating new flashcards with AI.
+    """
+
+    st.subheader("Generate")
+    st.write(
+        "Generate flashcards from a file, pasted text, or a URL. "
+        "This is useful if you have raw study material you'd like to turn into flashcards."
+    )
+
+    # Create an instance of our AI importer
+    ai_importer = AIFlashcardImporter()
+
+    # 1) File uploader
+    uploaded_file = st.file_uploader(
+        label="Upload a .txt file (optional)",
+        type=["txt"],  # or ["txt", "pdf"] if you want to handle PDFs later
+        help="Provide a text file with the content you want to convert into flashcards."
+    )
+
+    # 2) Text area
+    text_input = st.text_area(
+        "Or paste text content here",
+        "",
+        help="You can directly paste your notes or content here."
+    )
+
+    # 3) URL input
+    url_input = st.text_input(
+        "Or provide a URL (optional)",
+        "",
+        help="If you want to pull text from a URL, enter it here."
+    )
+
+    # Action button
+    if st.button("Generate Flashcards"):
+        # Decide which source to process
+        final_text = ""
+        if uploaded_file is not None:
+            final_text = ai_importer.process_file(uploaded_file)
+        elif text_input.strip():
+            final_text = ai_importer.process_text(text_input.strip())
+        elif url_input.strip():
+            final_text = ai_importer.process_url(url_input.strip())
+
+        if not final_text:
+            st.warning("No valid content provided. Please upload a file, paste text, or enter a URL.")
+            return
+
+        # Call the AI logic to transform the text into flashcards
+        generated_cards = ai_importer.generate_flashcards(final_text)
+
+        if not generated_cards:
+            st.info("No flashcards were generated (placeholder AI logic).")
+        else:
+            st.success(f"Generated {len(generated_cards)} flashcards!")
+            # Display a quick preview
+            for i, card in enumerate(generated_cards, start=1):
+                st.markdown(f"**Flashcard {i}**")
+                st.write("Front:", card["front"])
+                st.write("Back:", card["back"])
+                st.divider()
