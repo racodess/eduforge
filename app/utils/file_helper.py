@@ -1,5 +1,3 @@
-# file_helper.py
-
 import os
 import io
 import base64
@@ -10,7 +8,7 @@ from PIL import Image
 from rich.console import Console
 from pdf2image import convert_from_path
 
-from utils import logger
+from utils.logger import logger
 
 class FileHelper:
 
@@ -90,9 +88,10 @@ class FileHelper:
             return cls.EXTENSION_CONTENT_TYPE_MAP.get(ext, 'unsupported')
         return 'unsupported'
 
-    def process_file(self, uploaded_file) -> str:
+    def process_file(self, uploaded_file, start_page=None, end_page=None) -> str:
         """
-        Processes an uploaded file (txt, pdf, image) and returns its text content.
+        Processes an uploaded file (txt, pdf, image) and returns its text content or image data URI.
+        Added support for processing PDF files with a specified page range and images using base64 URIs.
         """
         filename = uploaded_file.name
         _, ext = os.path.splitext(filename)
@@ -115,16 +114,24 @@ class FileHelper:
             uploaded_file.seek(0)
             reader = PdfReader(uploaded_file)
             text_content = ""
-            for page in reader.pages:
+            pages = reader.pages
+            if start_page is not None and end_page is not None:
+                pages = reader.pages[start_page - 1: end_page]
+            for page in pages:
                 page_text = page.extract_text()
                 if page_text:
                     text_content += page_text + "\n"
             self._set_media_copy_fileobj(uploaded_file, filename)
             return text_content.strip()
         elif content_type == 'image':
-            # Flashcard generation from images is not supported.
-            logger.warning("Flashcard generation from images is not supported.")
-            return ""
+            # Process image file using base64 image URI conversion.
+            uploaded_file.seek(0)
+            self._set_media_copy_fileobj(uploaded_file, filename)
+            # Ensure the file pointer is at the start so Pillow can read it.
+            uploaded_file.seek(0)
+            image = Image.open(uploaded_file)
+            image_uri = FileHelper._get_img_uri(image)
+            return image_uri
         return ""
 
     def process_text(self, text: str) -> str:
@@ -200,6 +207,13 @@ class FileHelper:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def regenerate_flashcard(self, flashcard):
+        """
+        Simulates a call to the AI to regenerate a single flashcard.
+        For demonstration purposes, this function appends " (AI Regenerated)" to the flashcard's back.
+        """
+        return flashcard.copy(update={"back": flashcard.back + " (AI Regenerated)"})
+
     # Dispatch table mapping content types to their read functions.
     READ_DISPATCH = {
         'text': _get_plain_text,
@@ -209,20 +223,37 @@ class FileHelper:
 
     def generate_flashcards_pipeline(self, text: str, flashcard_type='general'):
         """
-        Uses the generation pipeline to produce flashcards from the provided text content.
-        This method writes the text to a temporary file, creates an instance of ModelPipeline,
-        invokes its generation method, then cleans up and returns the generated flashcards.
+        Uses the generation pipeline to produce flashcards from the provided content.
+        
+        When the content is a base64 image URI (detected if it starts with "data:image"),
+        bypass writing to a temporary file and directly create an image chunk.
+        
+        For text input, writes the content to a temporary .txt file.
         """
-        temp_file_path = os.path.join(self.get_media_path(), "temp_flashcard.txt")
-        with open(temp_file_path, "w", encoding="utf-8") as f:
-            f.write(text)
         from utils.model_pipeline import ModelPipeline
         pipeline = ModelPipeline(media_dir=self.get_media_path())
-        models = pipeline.generate_flashcards(
-            file_path=temp_file_path,
-            flashcard_type=flashcard_type,
-            media_path=self.get_media_path()
-        )
-        # Clean up the temporary file.
-        os.remove(temp_file_path)
+        
+        # Check if the text is actually a base64-encoded image.
+        if text.startswith("data:image"):
+            models = pipeline._process_chunks(
+                chunks=[{"title": "Uploaded Image", "content": text}],
+                card_type=flashcard_type,
+                url_name="",
+                file_name="uploaded_image.png",  # Dummy filename with correct extension
+                content_type="image",
+                media_path=self.get_media_path()
+            )
+        else:
+            # Handle as text input: write to a temporary file first.
+            temp_file_path = os.path.join(self.get_media_path(), "temp_flashcard.txt")
+            with open(temp_file_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            models = pipeline.generate_flashcards(
+                file_path=temp_file_path,
+                flashcard_type=flashcard_type,
+                media_path=self.get_media_path()
+            )
+            # Clean up the temporary file.
+            os.remove(temp_file_path)
+        
         return models

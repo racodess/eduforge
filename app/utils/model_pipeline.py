@@ -245,8 +245,10 @@ class ModelPipeline:
 
             if content_type in ["text", "url"]:
                 self.console.print(chunk_text)
+            elif content_type == "image":
+                self.console.print("Processing image for flashcard generation (base64 image URI received).")
             else:
-                self.console.print("Image placeholder text")
+                self.console.print("Unsupported content type for flashcard generation.")
 
             card_model = self._run_concept_flow(
                 content=chunk_text,

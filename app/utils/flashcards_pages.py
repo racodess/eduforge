@@ -1,5 +1,3 @@
-# flashcards_pages.py
-
 import json
 from datetime import datetime
 import streamlit as st
@@ -424,8 +422,9 @@ def render_ai_import_section(deck_id: int):
     options to add, delete, or regenerate them individually, as well as add all or delete all.
     """
     import json
-    from utils.flashcards_db import add_card
+    from utils.flashcards_db import add_card, get_decks
     from utils.model_schemas import FlashcardItem  # Import the Pydantic model
+    from utils.file_helper import FileHelper
 
     st.subheader("Generate")
     st.write(
@@ -440,12 +439,46 @@ def render_ai_import_section(deck_id: int):
     # Create an instance of our AI flashcard importer
     file_helper = FileHelper()
 
-    # 1) File uploader (supporting .txt and .pdf)
+    # --- Deck Selection Dropdown ---
+    available_decks = get_decks()
+    if not available_decks:
+        st.error("No decks available. Please create a deck first.")
+        return
+    deck_options = { deck_name: deck_id for deck_id, deck_name in available_decks }
+    default_deck = None
+    if st.session_state.get("selected_deck_id"):
+        default_deck_id = st.session_state.selected_deck_id
+        for name, did in deck_options.items():
+            if did == default_deck_id:
+                default_deck = name
+                break
+    if not default_deck:
+        default_deck = list(deck_options.keys())[0]
+    selected_deck_name = st.selectbox("Select Deck to Add Flashcards", options=list(deck_options.keys()), index=list(deck_options.keys()).index(default_deck))
+    target_deck_id = deck_options[selected_deck_name]
+
+    # 1) File uploader (supporting .txt, .pdf, and images)
     uploaded_file = st.file_uploader(
-        label="Upload a .txt or .pdf file (optional)",
-        type=["txt", "pdf"],
-        help="Provide a text file with the content you want to convert into flashcards."
+        label="Upload a .txt, .pdf, or image file (optional)",
+        type=["txt", "pdf", "png", "jpg", "jpeg", "gif"],
+        help="Provide a text file, PDF, or image with the content you want to convert into flashcards."
     )
+
+    # PDF Page Range Form
+    page_range = None
+    if uploaded_file is not None and uploaded_file.name.lower().endswith('.pdf'):
+        try:
+            from PyPDF2 import PdfReader
+            uploaded_file.seek(0)
+            pdf_reader = PdfReader(uploaded_file)
+            total_pages = len(pdf_reader.pages)
+            uploaded_file.seek(0)
+        except Exception as e:
+            total_pages = 0
+        col1, col2 = st.columns(2)
+        start_page = col1.number_input("Start Page", min_value=1, max_value=total_pages if total_pages > 0 else 1, value=1, step=1)
+        end_page = col2.number_input("End Page", min_value=1, max_value=total_pages if total_pages > 0 else 1, value=total_pages if total_pages > 0 else 1, step=1)
+        page_range = (start_page, end_page)
 
     # 2) Text area for pasted content
     text_input = st.text_area(
@@ -464,7 +497,10 @@ def render_ai_import_section(deck_id: int):
     if st.button("Generate Flashcards", use_container_width=True):
         final_text = ""
         if uploaded_file is not None:
-            final_text = file_helper.process_file(uploaded_file)
+            if uploaded_file.name.lower().endswith('.pdf') and page_range is not None:
+                final_text = file_helper.process_file(uploaded_file, start_page=page_range[0], end_page=page_range[1])
+            else:
+                final_text = file_helper.process_file(uploaded_file)
         elif text_input.strip():
             final_text = file_helper.process_text(text_input.strip())
         elif url_input.strip():
@@ -488,7 +524,6 @@ def render_ai_import_section(deck_id: int):
 
     # Display generated flashcards (if any)
     if st.session_state.get("generated_cards"):
-        # Add a horizontal line separator under the flashcard generation notification
         st.markdown("<hr>", unsafe_allow_html=True)
 
         st.markdown(
@@ -501,7 +536,7 @@ def render_ai_import_section(deck_id: int):
         with all_cols[0]:
             if st.button("Add All", use_container_width=True):
                 for card in st.session_state.generated_cards:
-                    add_card(deck_id, card.front, card.back, extra_fields=None)
+                    add_card(target_deck_id, card.front, card.back, extra_fields=None)
                 st.success("All generated flashcards have been imported to your deck!")
                 st.session_state.generated_cards = []
                 st.rerun()
@@ -512,17 +547,14 @@ def render_ai_import_section(deck_id: int):
 
         # --- Render each flashcard inside its own centered box ---
         for i, card in enumerate(st.session_state.generated_cards):
-            # Use columns to center the box on the page.
             center_cols = st.columns([1, 6, 1])
             with center_cols[1]:
                 with st.container(border=True):
-                    # Flashcard number header (left-aligned, small)
                     st.markdown(
                         f'<div style="text-align: left; font-size: 16px;"><strong>Flashcard {i+1}</strong></div>',
                         unsafe_allow_html=True
                     )
                     st.text("")
-                    # "Front" header and content (centered)
                     st.markdown(
                         '<div style="text-align: center;"><h3>Front</h3></div>',
                         unsafe_allow_html=True
@@ -533,7 +565,6 @@ def render_ai_import_section(deck_id: int):
                     )
                     st.text("")
                     st.text("")
-                    # "Back" header and content (centered)
                     st.markdown(
                         '<div style="text-align: center;"><h3>Back</h3></div>',
                         unsafe_allow_html=True
@@ -543,21 +574,20 @@ def render_ai_import_section(deck_id: int):
                         unsafe_allow_html=True
                     )
                     st.divider()
-                    # Place the Add, Delete, and Regenerate buttons at the bottom of the box.
                     btn_cols = st.columns(5)
                     with btn_cols[1]:
-                        if st.button("", key=f"gen_add_{i}", type="tertiary", icon=":material/add_circle:", use_container_width=True): # Add
-                            add_card(deck_id, card.front, card.back, extra_fields=None)
+                        if st.button("", key=f"gen_add_{i}", type="tertiary", icon=":material/add_circle:", use_container_width=True):
+                            add_card(target_deck_id, card.front, card.back, extra_fields=None)
                             st.success(f"Added flashcard {i+1} to deck")
                             st.session_state.generated_cards.pop(i)
                             st.rerun()
                     with btn_cols[2]:
-                        if st.button("", key=f"gen_regen_{i}", type="tertiary", icon=":material/cached:", use_container_width=True): # Regenerate
-                            new_card = card.copy(update={"back": card.back + " (regenerated)"})
+                        if st.button("", key=f"gen_regen_{i}", type="tertiary", icon=":material/cached:", use_container_width=True):
+                            new_card = file_helper.regenerate_flashcard(card)
                             st.session_state.generated_cards[i] = new_card
                             st.rerun()
                     with btn_cols[3]:
-                        if st.button("", key=f"gen_delete_{i}", type="tertiary", icon=":material/cancel:", use_container_width=True): # Delete
+                        if st.button("", key=f"gen_delete_{i}", type="tertiary", icon=":material/cancel:", use_container_width=True):
                             st.session_state.generated_cards.pop(i)
                             st.rerun()
 

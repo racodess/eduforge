@@ -44,13 +44,16 @@ class ModelHelper:
 
         messages = []
         if run_as_image:
+            # For image-based flashcard generation, wrap the base64 image URI appropriately.
+            # Fix: Wrap the base64 string in an object with a key 'url'
             messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": [{"type": "image_url", "image_url": {"url": user_text}}]}
             ]
-            conversation.append({"role": "user", "content": "Image placeholder for brevity."})
+            conversation.append({"role": "user", "content": "Sent an image for flashcard generation."})
         else:
             conversation.append({"role": "user", "content": user_text})
+            messages = conversation
 
         completion = self.get_completion(
             messages=messages if run_as_image else conversation,
@@ -89,7 +92,7 @@ class ModelHelper:
                 top_p=0.1
             )
         except Exception as e:
-            logger.logger.error("Error calling LLM: %s", e, exc_info=True)
+            logger.error("Error calling LLM: %s", e, exc_info=True)
             raise
 
         self.console.log(f"[bold yellow]`{model}` response:[/bold yellow]", completion.choices[0].message.content)
