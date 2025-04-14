@@ -10,7 +10,7 @@ from utils.flashcards_db import (
 )
 from utils.flashcards_sm2 import update_sm2, project_interval, format_interval_short
 from utils.flashcards_ui import render_card_visual, render_card_form
-from utils.flashcards_ai import AIFlashcardImporter
+from utils.file_helper import FileHelper
 
 def render_deck_row(deck_id, deck_name, stats):
     row_cols = st.columns([2, 1, 1, 1, 6])
@@ -22,7 +22,7 @@ def render_deck_row(deck_id, deck_name, stats):
     with row_cols[4]:
         action_cols = st.columns(4)
         # Review
-        if action_cols[0].button("Review", key=f"review_deck_{deck_id}"):
+        if action_cols[0].button("Review", key=f"review_deck_{deck_id}", use_container_width=True):
             st.session_state.selected_deck_id = deck_id
             st.session_state.selected_deck_mode = "review"
             st.session_state.review_card_id = None
@@ -31,7 +31,7 @@ def render_deck_row(deck_id, deck_name, stats):
             st.rerun()
 
         # Browse
-        if action_cols[1].button("Browse", key=f"browse_deck_{deck_id}"):
+        if action_cols[1].button("Browse", key=f"browse_deck_{deck_id}", use_container_width=True):
             st.session_state.selected_deck_id = deck_id
             st.session_state.selected_deck_mode = "browse"
             st.rerun()
@@ -48,11 +48,12 @@ def render_deck_row(deck_id, deck_name, stats):
             deck_json,
             file_name=f"{deck_name}.json",
             mime="application/json",
-            key=f"export_deck_{deck_id}"
+            key=f"export_deck_{deck_id}",
+            use_container_width=True
         )
 
         # Delete
-        if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}"):
+        if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}", use_container_width=True):
             st.session_state.deck_pending_delete = deck_id
             st.rerun()
 
@@ -73,12 +74,12 @@ def render_deck_list():
             if st.session_state.deck_pending_delete == deck_id:
                 st.info("Are you sure you want to delete this deck?")
                 confirm_cols = st.columns(2)
-                if confirm_cols[0].button("Yes", key=f"confirm_delete_yes_{deck_id}"):
+                if confirm_cols[0].button("Yes", key=f"confirm_delete_yes_{deck_id}", use_container_width=True):
                     trash_deck(deck_id)
                     st.success(f"Deck '{deck_name}' deleted!")
                     st.session_state.deck_pending_delete = None
                     st.rerun()
-                if confirm_cols[1].button("No", key=f"confirm_delete_no_{deck_id}"):
+                if confirm_cols[1].button("No", key=f"confirm_delete_no_{deck_id}", use_container_width=True):
                     st.session_state.deck_pending_delete = None
                     st.rerun()
     else:
@@ -87,7 +88,7 @@ def render_deck_list():
     st.divider()
     st.subheader("Create New Deck")
     new_deck_name = st.text_input("Deck Name", "")
-    if st.button("Create Deck"):
+    if st.button("Create Deck", use_container_width=True):
         if new_deck_name.strip():
             create_deck(new_deck_name.strip())
             st.rerun()
@@ -97,7 +98,7 @@ def render_deck_list():
     st.divider()
     st.subheader("Import Deck")
     imported_file = st.file_uploader("Select a deck file (JSON)", type=["json"], key="import_deck")
-    if st.button("Import"):
+    if st.button("Import", use_container_width=True):
         if imported_file is not None:
             try:
                 data = json.load(imported_file)
@@ -152,17 +153,17 @@ def render_edit_fields(deck_id):
                 key=f"edit_field_{deck_id}_{i}"
             )
             st.session_state.deck_fields[deck_id][i] = new_val
-            if col2.button("Delete", key=f"delete_field_{deck_id}_{i}"):
+            if col2.button("Delete", key=f"delete_field_{deck_id}_{i}", use_container_width=True):
                 st.session_state.deck_fields[deck_id].pop(i)
                 st.rerun()
 
     new_field = st.text_input("New Field Name", key=f"new_field_input_{deck_id}")
-    if st.button("Add Field", key=f"add_field_button_{deck_id}"):
+    if st.button("Add Field", key=f"add_field_button_{deck_id}", use_container_width=True):
         if new_field and new_field not in st.session_state.deck_fields[deck_id]:
             st.session_state.deck_fields[deck_id].append(new_field)
             st.rerun()
 
-    if st.button("Done Editing Fields", key=f"done_edit_fields_{deck_id}"):
+    if st.button("Done Editing Fields", key=f"done_edit_fields_{deck_id}", use_container_width=True):
         st.session_state.edit_fields = False
         st.rerun()
 
@@ -178,26 +179,26 @@ def render_deck_detail(deck_id):
     deck_name = row[0]
     top_row = st.columns([2, 8, 2])
 
-    if top_row[0].button("Back"):
+    if top_row[0].button("Back", use_container_width=True):
         st.session_state.selected_deck_id = None
         st.session_state.selected_deck_mode = None
         st.rerun()
 
     top_row[1].markdown(f"<h2 style='text-align:left;'>{deck_name}</h2>", unsafe_allow_html=True)
 
-    if top_row[2].button("Reset Deck"):
+    if top_row[2].button("Reset Deck", use_container_width=True):
         st.session_state.deck_pending_reset = deck_id
         st.rerun()
 
     if st.session_state.deck_pending_reset == deck_id:
         st.info("Are you sure you want to permanently reset the SM‑2 stats for this deck?")
         confirm_cols = st.columns(2)
-        if confirm_cols[0].button("Yes", key=f"confirm_reset_yes_{deck_id}"):
+        if confirm_cols[0].button("Yes", key=f"confirm_reset_yes_{deck_id}", use_container_width=True):
             reset_deck(deck_id)
             st.success("Deck reset successfully!")
             st.session_state.deck_pending_reset = None
             st.rerun()
-        if confirm_cols[1].button("No", key=f"confirm_reset_no_{deck_id}"):
+        if confirm_cols[1].button("No", key=f"confirm_reset_no_{deck_id}", use_container_width=True):
             st.session_state.deck_pending_reset = None
             st.rerun()
 
@@ -219,7 +220,7 @@ def render_deck_detail(deck_id):
                 except:
                     extras = {}
             render_card_visual(front, back, extras=extras, show_back=True)
-            if st.button("Done"):
+            if st.button("Done", use_container_width=True):
                 st.session_state.view_card_id = None
                 st.session_state.view_show_answer = False
             return
@@ -252,7 +253,7 @@ def render_deck_detail(deck_id):
             row_cols = st.columns([1, 2, 1, 1, 1, 1])
             row_cols[0].write(card_id)
             row_cols[1].write(front)
-            if row_cols[2].button("View", key=f"view_{card_id}"):
+            if row_cols[2].button("View", key=f"view_{card_id}", use_container_width=True):
                 if st.session_state.view_card_id == card_id:
                     st.session_state.view_card_id = None
                     st.session_state.view_show_answer = False
@@ -260,16 +261,16 @@ def render_deck_detail(deck_id):
                     st.session_state.view_card_id = card_id
                     st.session_state.view_show_answer = False
                 st.rerun()
-            if row_cols[3].button("Edit", key=f"select_{card_id}"):
+            if row_cols[3].button("Edit", key=f"select_{card_id}", use_container_width=True):
                 st.session_state.selected_card_id = card_id
                 st.rerun()
-            if row_cols[4].button("Stats", key=f"stats_{card_id}"):
+            if row_cols[4].button("Stats", key=f"stats_{card_id}", use_container_width=True):
                 if st.session_state.get("selected_stats_card_id") == card_id:
                     st.session_state.selected_stats_card_id = None
                 else:
                     st.session_state.selected_stats_card_id = card_id
                 st.rerun()
-            if row_cols[5].button("Delete", key=f"delete_{card_id}"):
+            if row_cols[5].button("Delete", key=f"delete_{card_id}", use_container_width=True):
                 delete_card(card_id)
                 st.success("Card deleted!")
                 st.rerun()
@@ -316,7 +317,7 @@ def render_deck_review(deck_id):
 
     deck_name = row[0]
     top_row = st.columns([2, 8])
-    if top_row[0].button("Back"):
+    if top_row[0].button("Back", use_container_width=True):
         st.session_state.selected_deck_id = None
         st.session_state.selected_deck_mode = None
         st.session_state.review_card_id = None
@@ -355,7 +356,7 @@ def render_deck_review(deck_id):
             new_front = st.text_area("Edit Front", value=front)
             new_back = st.text_area("Edit Back", value=back)
             col1, col2 = st.columns(2)
-            if col2.form_submit_button("Save"):
+            if col2.form_submit_button("Save", use_container_width=True):
                 if new_front.strip() and new_back.strip():
                     update_card(card_id, new_front.strip(), new_back.strip())
                     st.success("Card updated!")
@@ -363,7 +364,7 @@ def render_deck_review(deck_id):
                     st.rerun()
                 else:
                     st.error("Both front and back must have content.")
-            if col1.form_submit_button("Cancel"):
+            if col1.form_submit_button("Cancel", use_container_width=True):
                 st.session_state.review_edit_mode = False
                 st.rerun()
         return
@@ -378,7 +379,7 @@ def render_deck_review(deck_id):
     render_card_visual(front, back, extras=extras, show_back=st.session_state.review_show_answer)
     st.divider()
     if not st.session_state.review_show_answer:
-        if st.button("Show Answer"):
+        if st.button("Show Answer", use_container_width=True):
             st.session_state.review_show_answer = True
             st.rerun()
     else:
@@ -392,26 +393,26 @@ def render_deck_review(deck_id):
         header_cols[3].markdown(proj_good)
         header_cols[4].markdown(proj_easy)
         btn_cols = st.columns([2, 1, 1, 1, 1])
-        if btn_cols[0].button("Edit", key="edit_card"):
+        if btn_cols[0].button("Edit", key="edit_card", use_container_width=True):
             st.session_state.review_edit_mode = True
             st.rerun()
         with btn_cols[1]:
-            if st.button("Again", key="again"):
+            if st.button("Again", key="again", use_container_width=True):
                 update_sm2(card_id, 0)
                 go_to_next_card(deck_id)
                 st.rerun()
         with btn_cols[2]:
-            if st.button("Hard", key="hard"):
+            if st.button("Hard", key="hard", use_container_width=True):
                 update_sm2(card_id, 3)
                 go_to_next_card(deck_id)
                 st.rerun()
         with btn_cols[3]:
-            if st.button("Good", key="good"):
+            if st.button("Good", key="good", use_container_width=True):
                 update_sm2(card_id, 4)
                 go_to_next_card(deck_id)
                 st.rerun()
         with btn_cols[4]:
-            if st.button("Easy", key="easy"):
+            if st.button("Easy", key="easy", use_container_width=True):
                 update_sm2(card_id, 5)
                 go_to_next_card(deck_id)
                 st.rerun()
@@ -419,16 +420,25 @@ def render_deck_review(deck_id):
 def render_ai_import_section(deck_id: int):
     """
     Adds a section where the user can upload a file, paste text, or provide a URL
-    for generating new flashcards with AI.
+    for generating new flashcards with AI. Also displays generated flashcards with
+    options to add, delete, or regenerate them individually, as well as add all or delete all.
     """
+    import json
+    from utils.flashcards_db import add_card
+    from utils.model_schemas import FlashcardItem  # Import the Pydantic model
+
     st.subheader("Generate")
     st.write(
         "Generate flashcards from a file, pasted text, or a URL. "
         "This is useful if you have raw study material you'd like to turn into flashcards."
     )
 
+    # Initialize generated_cards in session state if not already set.
+    if "generated_cards" not in st.session_state:
+        st.session_state.generated_cards = []
+
     # Create an instance of our AI flashcard importer
-    ai_importer = AIFlashcardImporter()
+    file_helper = FileHelper()
 
     # 1) File uploader (supporting .txt and .pdf)
     uploaded_file = st.file_uploader(
@@ -451,36 +461,105 @@ def render_ai_import_section(deck_id: int):
         help="If you want to pull text from a URL, enter it here."
     )
 
-    if st.button("Generate Flashcards"):
+    if st.button("Generate Flashcards", use_container_width=True):
         final_text = ""
         if uploaded_file is not None:
-            final_text = ai_importer.process_file(uploaded_file)
+            final_text = file_helper.process_file(uploaded_file)
         elif text_input.strip():
-            final_text = ai_importer.process_text(text_input.strip())
+            final_text = file_helper.process_text(text_input.strip())
         elif url_input.strip():
-            final_text = ai_importer.process_url(url_input.strip())
+            final_text = file_helper.process_url(url_input.strip())
 
         if not final_text:
             st.warning("No valid content provided. Please upload a file, paste text, or enter a URL.")
-            return
-
-        generated_cards = ai_importer.generate_flashcards(final_text)
-
-        if not generated_cards:
-            st.info("No flashcards were generated (placeholder AI logic).")
         else:
-            st.success(f"Generated {len(generated_cards)} flashcards!")
-            for i, card in enumerate(generated_cards, start=1):
-                st.markdown(f"**Flashcard {i}**")
-                st.write("Front:", card["front"])
-                st.write("Back:", card["back"])
-                st.divider()
-            
-            if st.button("Import Cards to Deck"):
-                for card in generated_cards:
-                    add_card(deck_id, card["front"], card["back"], extra_fields=None)
+            # Use the new pipeline method.
+            generated_models = file_helper.generate_flashcards_pipeline(final_text)
+            generated_cards = []
+            # Each model returned from the pipeline can include multiple flashcards.
+            for model_instance in generated_models:
+                if hasattr(model_instance, "flashcards"):
+                    generated_cards.extend(model_instance.flashcards)
+            st.session_state.generated_cards = generated_cards
+            if generated_cards:
+                st.success(f"Generated {len(generated_cards)} flashcards!")
+            else:
+                st.info("No flashcards were generated.")
+
+    # Display generated flashcards (if any)
+    if st.session_state.get("generated_cards"):
+        # Add a horizontal line separator under the flashcard generation notification
+        st.markdown("<hr>", unsafe_allow_html=True)
+
+        st.markdown(
+            "<h2 style='text-align: center;'>Generated Flashcards</h2>",
+            unsafe_allow_html=True
+        )
+
+        # --- Move the Add All and Delete All buttons to the top ---
+        all_cols = st.columns(2)
+        with all_cols[0]:
+            if st.button("Add All", use_container_width=True):
+                for card in st.session_state.generated_cards:
+                    add_card(deck_id, card.front, card.back, extra_fields=None)
                 st.success("All generated flashcards have been imported to your deck!")
+                st.session_state.generated_cards = []
                 st.rerun()
+        with all_cols[1]:
+            if st.button("Delete All", use_container_width=True):
+                st.session_state.generated_cards = []
+                st.rerun()
+
+        # --- Render each flashcard inside its own centered box ---
+        for i, card in enumerate(st.session_state.generated_cards):
+            # Use columns to center the box on the page.
+            center_cols = st.columns([1, 6, 1])
+            with center_cols[1]:
+                with st.container(border=True):
+                    # Flashcard number header (left-aligned, small)
+                    st.markdown(
+                        f'<div style="text-align: left; font-size: 16px;"><strong>Flashcard {i+1}</strong></div>',
+                        unsafe_allow_html=True
+                    )
+                    st.text("")
+                    # "Front" header and content (centered)
+                    st.markdown(
+                        '<div style="text-align: center;"><h3>Front</h3></div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<div style="text-align: center;">{card.front}</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.text("")
+                    st.text("")
+                    # "Back" header and content (centered)
+                    st.markdown(
+                        '<div style="text-align: center;"><h3>Back</h3></div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<div style="text-align: center;">{card.back}</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.divider()
+                    # Place the Add, Delete, and Regenerate buttons at the bottom of the box.
+                    btn_cols = st.columns(5)
+                    with btn_cols[1]:
+                        if st.button("", key=f"gen_add_{i}", type="tertiary", icon=":material/add_circle:", use_container_width=True): # Add
+                            add_card(deck_id, card.front, card.back, extra_fields=None)
+                            st.success(f"Added flashcard {i+1} to deck")
+                            st.session_state.generated_cards.pop(i)
+                            st.rerun()
+                    with btn_cols[2]:
+                        if st.button("", key=f"gen_regen_{i}", type="tertiary", icon=":material/cached:", use_container_width=True): # Regenerate
+                            new_card = card.copy(update={"back": card.back + " (regenerated)"})
+                            st.session_state.generated_cards[i] = new_card
+                            st.rerun()
+                    with btn_cols[3]:
+                        if st.button("", key=f"gen_delete_{i}", type="tertiary", icon=":material/cancel:", use_container_width=True): # Delete
+                            st.session_state.generated_cards.pop(i)
+                            st.rerun()
 
 def main():
     st.title("Flashcards")
