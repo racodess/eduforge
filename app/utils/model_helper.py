@@ -11,7 +11,7 @@ from utils.logger import logger
 class ModelHelper:
     """
     A helper class for interacting with the OpenAI API
-    to rewrite text, generate flashcards, etc.
+    to rewrite text, generate flashcards or notes, etc.
     """
     def __init__(self, model_text="gpt-4o-mini", model_image="gpt-4o-2024-11-20"):
         self.model_text = model_text
@@ -21,9 +21,11 @@ class ModelHelper:
 
     class PromptType(Enum):
         CONCEPTS = "concepts"
+        NOTES = "notes"
 
     PROMPT_TEMPLATES = {
         PromptType.CONCEPTS: prompts.CONCEPT_FLASHCARD_PROMPT,
+        PromptType.NOTES: prompts.NOTE_GENERATION_PROMPT,
     }
 
     def get_num_tokens(self, string: str, encoding_name: str = None) -> int:
@@ -44,8 +46,6 @@ class ModelHelper:
 
         messages = []
         if run_as_image:
-            # For image-based flashcard generation, wrap the base64 image URI appropriately.
-            # Fix: Wrap the base64 string in an object with a key 'url'
             messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": [{"type": "image_url", "image_url": {"url": user_text}}]}

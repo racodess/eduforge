@@ -84,8 +84,7 @@ def render_deck_list():
         st.info("No decks found. Create one below.")
 
     st.divider()
-    st.subheader("Create New Deck")
-    new_deck_name = st.text_input("Deck Name", "")
+    new_deck_name = st.text_input("Create New Deck", "")
     if st.button("Create Deck", use_container_width=True):
         if new_deck_name.strip():
             create_deck(new_deck_name.strip())
@@ -94,8 +93,7 @@ def render_deck_list():
             st.error("Please provide a valid deck name.")
 
     st.divider()
-    st.subheader("Import Deck")
-    imported_file = st.file_uploader("Select a deck file (JSON)", type=["json"], key="import_deck")
+    imported_file = st.file_uploader("Import Deck", type=["json"], key="import_deck")
     if st.button("Import", use_container_width=True):
         if imported_file is not None:
             try:
@@ -426,11 +424,13 @@ def render_ai_import_section(deck_id: int):
     from utils.model_schemas import FlashcardItem  # Import the Pydantic model
     from utils.file_helper import FileHelper
 
-    st.subheader("Generate")
-    st.write(
-        "Generate flashcards from a file, pasted text, or a URL. "
-        "This is useful if you have raw study material you'd like to turn into flashcards."
+    st.markdown(
+        f'<div style="text-align: center; font-size: 36px;"><strong>Generate</strong></div>',
+        unsafe_allow_html=True
     )
+
+    st.text("")      
+    st.text("")
 
     # Initialize generated_cards in session state if not already set.
     if "generated_cards" not in st.session_state:
@@ -459,7 +459,7 @@ def render_ai_import_section(deck_id: int):
 
     # 1) File uploader (supporting .txt, .pdf, and images)
     uploaded_file = st.file_uploader(
-        label="Upload a .txt, .pdf, or image file (optional)",
+        label="Upload a .txt, .pdf, or image file",
         type=["txt", "pdf", "png", "jpg", "jpeg", "gif"],
         help="Provide a text file, PDF, or image with the content you want to convert into flashcards."
     )
@@ -489,7 +489,7 @@ def render_ai_import_section(deck_id: int):
 
     # 3) URL input
     url_input = st.text_input(
-        "Or provide a URL (optional)",
+        "Or provide a URL",
         "",
         help="If you want to pull text from a URL, enter it here."
     )

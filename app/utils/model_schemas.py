@@ -25,3 +25,23 @@ class Flashcard(BaseModel):
         )
     )
     model_config = ConfigDict(extra='forbid')
+
+# New models for notes generation
+
+class NoteItem(BaseModel):
+    title: str = Field(
+        description="Title of the note in markdown format."
+    )
+    content: str = Field(
+        description="Content of the note in markdown format."
+    )
+    model_config = ConfigDict(extra='forbid')
+
+class Note(BaseModel):
+    notes: List[NoteItem] = Field(
+        description="A list of markdown-formatted notes generated from source material."
+    )
+    header: str = Field(
+        description="Provide a succinct title for the notes section in markdown format."
+    )
+    model_config = ConfigDict(extra='forbid')

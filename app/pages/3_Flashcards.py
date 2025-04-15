@@ -50,7 +50,12 @@ update_db_schema()
 
 # ------------- Main Page Logic -------------
 def main():
-    st.title("Flashcards")
+    st.markdown(
+        f'<div style="text-align: center; font-size: 36px;"><strong>Flashcards</strong></div>',
+        unsafe_allow_html=True
+    )
+    st.text("")
+    st.text("")
     
     if st.session_state.selected_deck_id is None:
         # Show deck list
