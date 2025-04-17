@@ -8,7 +8,7 @@ st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
 # Remove anchor tags
 st.html("<style>[data-testid='stHeaderActionElements'] {display: none;}</style>")
 
-st.title("eduForge", anchor=False)
+st.title("EduForge", anchor=False)
 st.caption("AI ENHANCED LEARNING")
 
 st.divider()
@@ -17,7 +17,7 @@ col1, col2 = st.columns([3, 4])
 col1.markdown("""
     # Here to help :violet[optimize] your learning
 
-    eduForge will aid your pathway to becoming a Software Engineer!
+    EduForge will aid your pathway to becoming a Software Engineer!
 """)
 col2.image("media/code.jpg")
 
