@@ -7,13 +7,27 @@ with open('./ui-theme/global.css') as f:
     css = f.read()
 st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
 
-
 # Content
-st.title('eduForge 📖', anchor=False)
-st.markdown('Welcome to **eduForge**! Enjoy your stay!')
+st.title('EduForge 📖', anchor=False)
+st.markdown('Welcome to **EduForge**! Enjoy your stay!')
 st.markdown("""
 
-# Version Notes: eduForge v0.1.3
+# Version Notes: EduForge v0.1.4
+            
+## Changes
+- Updated quiz GPT model from 3.5 turbo to 4o-mini for improved cost efficiency
+- Fixed conversation history when generating a similar quiz question
+- Improved formatting for quiz questions with code
+- Updated README
+
+### File Structure
+            
+- ```UPDATE``` %/app/pages/3_Quiz.py - improved functionality (see changes)          
+- ```UPDATE``` %/README.md - updated instructions
+            
+---              
+
+# Version Notes: EduForge v0.1.3
             
 ## Changes
 - Removed excess files
@@ -35,7 +49,7 @@ st.markdown("""
             
 ---    
 
-# Version Notes: eduForge v0.1.2
+# Version Notes: EduForge v0.1.2
             
 ## Changes
 - Added a Home page
@@ -44,17 +58,17 @@ st.markdown("""
 
 ### File Structure
             
-- ```NEW``` %/app/pages/1_Home.py - home page outlining eduForge
+- ```NEW``` %/app/pages/1_Home.py - home page outlining EduForge
 - ```RENAME/UPDATE``` %/app/pages/1_Quiz.py → %/app/pages/3_Quiz.py
 - ```RENAME``` %/app/pages/3_Chatbot.py → %/app/pages/4_Chatbot.py 
             
 ---        
 
-# Version Notes: eduForge v0.1.1
+# Version Notes: EduForge v0.1.1
 As promised, welcome to my patch notes for v0.1.1!
             
 ## Changes
-Basic overview of changes made to eduForge
+Basic overview of changes made to EduForge
 ### File Structure
 Folders
 - ```NEW``` %/.streamlit - folder containing config files
@@ -66,17 +80,17 @@ Files
 - ```NEW``` %/run.bat - easier access to run
 - ```NEW``` %/.streamlit/config.toml - streamlit theme config file
 - ```NEW``` %/ui_theme/global.css - css file containing all global rulesets for style in webapp
-- ```NEW``` %/pages/0_Menu.py - menu/landing for eduForge page
+- ```NEW``` %/pages/0_Menu.py - menu/landing for EduForge page
 - ```RENAME/MOVE``` %/Anki_Flashcards.py -> %/app/pages/2_Anki-Flashcards.py
 - ```RENAME/MOVE``` %/pages/2_Chatbot.py -> %/app/pages/3_Chatbot.py
 - ```MOVE``` %/pages/1_Quiz.py -> %/app/pages/1_Quiz.py
 
 ### Run
-The easiest way to run this app rn is to just run the command ./run.bat```, which just runs the run command for streamlit and opens up the site.
+The easiest way to run this app right now is to just run the command `./run.bat`, which just runs the run command for streamlit and opens up the site.
 
 ### UI Updates
-Changed the color scheme to match Catpuccin Mocha, making it look kinda nice though.
-Made it a multi-page app that is swapable between the left side sidebar that responds to mobile too.
+Changed the color scheme to match Catpuccin Mocha, making it look kind of nice though.
+Made it a multi-page app that is swappable between the left side sidebar that responds to mobile too.
 
 That's all! Let me know if you have any questions! :)
 """)

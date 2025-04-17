@@ -23,9 +23,10 @@ output_format = {
     "choices": ["Berlin", "Madrid", "Paris", "Rome"],
     "answer": 2
 }
-    
+
 output_format_with_code = {
-    "title": "What is the output of the following Python code snippet?\n\nx = 5\ny = 2\nz = x + y * 10\nprint(z)",
+    "title": "What is the output of the following Python code snippet?",
+    "code": "\n\nx = 5\ny = 2\nz = x + y * 10\nprint(z)",
     "choices": ["22", "42", "62", "82"],
     "answer": 1
 }
@@ -134,15 +135,16 @@ if generate_btn:
     client = OpenAI(api_key=openai_api_key)
     state.message = [{
         "role": "user", 
-        "content": f"Generate a {state.difficulty} level question regarding {user_input}. Follow the exact json output format: {output_format}. The answer must be an index (an intenger) pointing to the correct choice. If there is a code snippet, follow the format {output_format_with_code}."
+        "content": f"Generate a {state.difficulty} level question regarding {user_input}. Follow the exact output format: {output_format}. The answer must be an index (an intenger) pointing to the correct choice. If there is a code snippet, follow the format {output_format_with_code}."
     }]
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo", 
+        model="gpt-4o-mini", 
         messages=state.message
     )
 
     output = response.choices[0].message.content
+    state.message.append({"role": "assistant", "content": output})
     output = output.replace('"', '\\"').replace("'", '"')
 
     state.question = json.loads(output)
@@ -156,6 +158,8 @@ if state.generate_btn:
     answer = question["choices"][int(question["answer"])]
 
     st.subheader(question["title"], anchor=False)
+    if "code" in question:
+        st.markdown(f"```{question["code"]}", unsafe_allow_html=True)
 
     cols = st.columns(2)
 
@@ -228,11 +232,12 @@ if state.generate_btn:
         # Make request for question
         client = OpenAI(api_key=openai_api_key)
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo", 
+            model="gpt-4o-mini", 
             messages=state.message
         )
 
         output = response.choices[0].message.content
+        state.message.append({"role": "assistant", "content": output})
         output = output.replace('"', '\\"').replace("'", '"')
 
         state.question = json.loads(output)
