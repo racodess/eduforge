@@ -22,10 +22,14 @@ class ModelHelper:
     class PromptType(Enum):
         CONCEPTS = "concepts"
         NOTES = "notes"
+        REWRITE = "rewrite_text"
+        VALIDATE_REWRITE = "validate_rewrite"
 
     PROMPT_TEMPLATES = {
         PromptType.CONCEPTS: prompts.CONCEPT_FLASHCARD_PROMPT,
         PromptType.NOTES: prompts.NOTE_GENERATION_PROMPT,
+        PromptType.REWRITE: prompts.REWRITE_PROMPT,
+        PromptType.VALIDATE_REWRITE: prompts.VALIDATE_REWRITE_PROMPT,
     }
 
     def get_num_tokens(self, string: str, encoding_name: str = None) -> int:
@@ -35,6 +39,31 @@ class ModelHelper:
     def get_system_message(self, prompt_type: PromptType, **kwargs) -> str:
         template = self.PROMPT_TEMPLATES.get(prompt_type, "")
         return template.format(**kwargs)
+    
+    def get_rewrite(self, text: str, *, content_type: str = "text") -> str:
+        """Rewrite *text* into clean Markdown, validating the result."""
+        system = self.get_system_message(self.PromptType.REWRITE)
+        msgs = [{"role": "system", "content": system},
+                {"role": "user",   "content": text}]
+
+        original_tokens = self.get_num_tokens(text)
+        min_tokens = max(original_tokens - 50, 0)
+
+        rewritten, rewritten_tokens = "", 0
+        for _ in range(2):
+            if rewritten_tokens <= min_tokens:
+                cmp = self.get_completion(msgs,
+                                        response_format=model_schemas.TEXT_FORMAT,
+                                        run_as_image=False)
+                rewritten = cmp.choices[0].message.content
+                rewritten_tokens = self.get_num_tokens(rewritten)
+            else:
+                break
+
+        if rewritten_tokens <= min_tokens and \
+        not self._is_valid_rewrite(text, rewritten):
+            raise ValueError("Rewrite validation failed – aborting.")
+        return rewritten
 
     def get_flashcards(self, conversation, system_message, user_text, run_as_image, response_format):
         """
@@ -75,6 +104,20 @@ class ModelHelper:
 
         self.console.log("\n[bold red]Token Usage:[/bold red]", completion.usage)
         return response
+     
+    def _is_valid_rewrite(self, original: str, rewritten: str) -> bool:
+        system = self.get_system_message(self.PromptType.VALIDATE_REWRITE,
+                                        user_message=original)
+        msgs = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": rewritten}
+        ]
+        cmp = self.get_completion(msgs,
+                                response_format=model_schemas.RewriteValidator,
+                                run_as_image=False)
+        verdict = model_schemas.RewriteValidator.model_validate_json(
+            cmp.choices[0].message.content)
+        return bool(verdict.is_valid)
 
     def get_completion(self, messages: list, response_format, run_as_image: bool = False):
         """

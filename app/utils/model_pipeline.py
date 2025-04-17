@@ -217,7 +217,7 @@ class ModelPipeline:
 
         results = []
         for idx, chunk in enumerate(chunks, start=1):
-            heading_title = chunk.get("title", file_name)
+            heading_title = chunk.get("title", file_name) or "(untitled section)"
             chunk_text = chunk["content"]
 
             print()

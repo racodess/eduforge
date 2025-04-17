@@ -12,6 +12,10 @@ class FlashcardItem(BaseModel):
     back: str = Field(
         description="The answer in markdown format. Use (`) for inline code, and language-detected code-block fencing for code snippets."
     )
+    data: str = Field(
+        default=None,
+        description="Exact markdown excerpt of the source material used to generate this flashcard."
+    )
     model_config = ConfigDict(extra='forbid')
 
 class Flashcard(BaseModel):
@@ -35,6 +39,10 @@ class NoteItem(BaseModel):
     content: str = Field(
         description="Content of the note in markdown format."
     )
+    data: str = Field(
+        default=None,
+        description="Exact markdown excerpt of the source material used to generate this note."
+    )
     model_config = ConfigDict(extra='forbid')
 
 class Note(BaseModel):
@@ -43,5 +51,11 @@ class Note(BaseModel):
     )
     header: str = Field(
         description="Provide a succinct title for the notes section in markdown format."
+    )
+    model_config = ConfigDict(extra='forbid')
+
+class RewriteValidator(BaseModel):
+    is_valid: bool = Field(
+        description="True if the response is a valid rewrite of the original source material, False otherwise."
     )
     model_config = ConfigDict(extra='forbid')

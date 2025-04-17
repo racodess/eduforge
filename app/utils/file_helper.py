@@ -1,5 +1,8 @@
+# file_helper.py
+
 import os
 import io
+import json
 import base64
 import shutil
 import tempfile
@@ -9,6 +12,9 @@ from rich.console import Console
 from pdf2image import convert_from_path
 
 from utils.logger import logger
+from utils.scraper import process_url as scrape_process_url
+from utils import model_schemas
+
 
 class FileHelper:
 
@@ -142,20 +148,36 @@ class FileHelper:
 
     def process_url(self, url):
         """
-        Processes the URL by fetching its textual content.
+        Fetch readable page text from *url*.
+
+        Steps
+        -----
+        1.  Use :pyfunc:`utils.scraper.process_url` to get heading‑based sections.
+        2.  Re‑assemble into Markdown (we keep headings so downstream chunk
+            merging can still use them as cues).
+        3.  Pipe the Markdown through the LLM rewrite assistant to remove
+            noise, duplicates, etc.
         """
-        logger.info("Generating flashcards from web page content.")
-        try:
-            import requests
-            response = requests.get(url)
-            if response.ok:
-                return response.text
-            else:
-                logger.error("Failed to fetch URL: %s", url)
-                return ""
-        except Exception as e:
-            logger.error("Error fetching URL %s: %s", url, e)
+        from utils.model_helper import ModelHelper
+
+        logger.info("Scraping and rewriting %s", url)
+        scraped = scrape_process_url(url)
+        if not scraped:
             return ""
+
+        merged_md = []
+        for sec in scraped["sections"]:
+            merged_md.append(f"## {sec['title']}\n{sec['content']}")
+        markdown_text = "\n\n".join(merged_md)
+
+        helper = ModelHelper()
+        try:
+            rewritten = helper.get_rewrite(markdown_text, content_type="url")
+            return rewritten.strip()
+        except Exception as e:
+            logger.error("Rewrite failed for %s: %s", url, e, exc_info=True)
+            # Fall back to raw markdown if rewrite bombs out
+            return markdown_text.strip()
 
     def _set_media_copy(self, file_path, content_type, media_path, pdf_viewer_path):
         """
@@ -207,12 +229,43 @@ class FileHelper:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    def regenerate_flashcard(self, flashcard):
+    def regenerate_flashcard(self, flashcard: "model_schemas.FlashcardItem"):
         """
-        Simulates a call to the AI to regenerate a single flashcard.
-        For demonstration purposes, this function appends " (AI Regenerated)" to the flashcard's back.
+        Calls the LLM to regenerate a single flashcard, using the card's
+        stored `data` excerpt as context. Falls back to the old front/back if
+        `data` is missing.
         """
-        return flashcard.copy(update={"back": flashcard.back + " (AI Regenerated)"})
+
+        from utils.model_helper import ModelHelper
+        from utils.prompts import REGENERATE_FLASHCARD_PROMPT
+
+        helper = ModelHelper()
+
+        user_payload = {
+            "original front": flashcard.front,
+            "original back": flashcard.back,
+            "context": flashcard.data or ""
+            }
+
+        # JSON‑encode so the LLM sees a text blob, not a Python object.
+        user_payload = json.dumps({
+            "original front": flashcard.front,
+            "original back": flashcard.back,
+            "context": flashcard.data or ""
+            }, 
+            ensure_ascii=False
+            )
+
+        response = helper.get_flashcards(
+            conversation=[],
+            system_message=REGENERATE_FLASHCARD_PROMPT,
+            user_text=user_payload,
+            run_as_image=False,
+            response_format=model_schemas.FlashcardItem
+        )
+
+        new_card = model_schemas.FlashcardItem.model_validate_json(response)
+        return new_card
 
     # Dispatch table mapping content types to their read functions.
     READ_DISPATCH = {
