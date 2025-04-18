@@ -68,6 +68,13 @@ def create_deck(deck_name):
     except sqlite3.IntegrityError:
         st.error("A deck with that name already exists!")
 
+def rename_deck(deck_id: int, new_name: str) -> None:
+    """
+    Change the name of an existing deck.
+    """
+    c.execute("UPDATE decks SET name = ? WHERE id = ?", (new_name, deck_id))
+    conn.commit()
+
 def get_cards(deck_id):
     c.execute("SELECT id, front, back FROM cards WHERE deck_id = ?", (deck_id,))
     return c.fetchall()

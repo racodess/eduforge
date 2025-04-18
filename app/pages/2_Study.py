@@ -2,8 +2,10 @@
 
 import re
 import json
+import os
 from datetime import datetime
 import streamlit as st
+from openai import OpenAI
 
 from utils.flashcards_db import (
     init_db as init_flashcards_db,
@@ -14,12 +16,14 @@ from utils.flashcards_db import (
 from utils.notes_db import (
     init_db as init_notes_db,
     get_notebooks, create_notebook, delete_notebook, rename_notebook,
-    get_notes, create_note, update_note, rename_note, delete_note
+    get_notes, create_note, update_note, rename_note, delete_note,
+    get_notebook_stats, get_note_by_id, get_notes_full
 )
 from utils.flashcards_sm2 import update_sm2, project_interval, format_interval_short
+from utils.notes_sm2 import update_sm2 as update_sm2_note, project_interval as project_interval_note
 from utils.flashcards_ui import render_card_visual, render_card_form
 from utils.file_helper import FileHelper
-
+from utils.quiz_section import render_quiz_section
 
 # --------------------------------------------------------------
 #                   DEFAULT CONTENT FOR NOTEBOOKS
@@ -82,6 +86,12 @@ def init_session_state():
         st.session_state.selected_notebook_id = None
     if "notebook_pending_delete" not in st.session_state:
         st.session_state.notebook_pending_delete = None
+    if "selected_notebook_mode" not in st.session_state:
+        st.session_state.selected_notebook_mode = None   # "browse" | "review"
+    if "review_note_id" not in st.session_state:
+        st.session_state.review_note_id = None
+    if "review_note_edit_mode" not in st.session_state:
+        st.session_state.review_note_edit_mode = False
 
     # For the Delete‑Tab dialog (unique keys to prevent collisions)
     if "delete_tab_dialog_open" not in st.session_state:
@@ -340,7 +350,7 @@ def render_decks_section() -> None:
     """
     import pandas as pd
 
-    st.markdown("## Flashcard Decks")
+    st.markdown("<h2 style='text-align:center;'>Flashcard Decks</h2>", unsafe_allow_html=True)
 
     # -------- Build the dataframe shown in the editor --------
     decks_raw = get_decks()                 # [(id, name), …]
@@ -424,67 +434,102 @@ def render_decks_section() -> None:
     sel_deck_name = sel_rows.iloc[0]["Deck"] if not sel_rows.empty else None
 
     # -------- Action buttons --------
-    btn_cols = st.columns(4)
-    with btn_cols[0]:
-        if st.button("Review", key="deck_review_btn", disabled=sel_deck_id is None):
+    with st.container():
+        col_review, col_browse, col_import, col_export, col_delete = st.columns(5)
+
+        # ── Review ────────────────────────────────
+        if col_review.button(
+            "", key="deck_review_btn",
+            type="tertiary", icon=":material/play_arrow:",
+            use_container_width=True,
+            disabled=sel_deck_id is None
+        ):
             st.session_state.update(
-                selected_deck_id=sel_deck_id,
-                selected_deck_mode="review",
-                review_card_id=None,
-                review_show_answer=False,
-                review_edit_mode=False,
+                selected_deck_id   = sel_deck_id,
+                selected_deck_mode = "review",
+                review_card_id     = None,
+                review_show_answer = False,
+                review_edit_mode   = False,
             )
             st.rerun()
 
-    with btn_cols[1]:
-        if st.button("Browse", key="deck_browse_btn", disabled=sel_deck_id is None):
-            st.session_state.selected_deck_id = sel_deck_id
+        # ── Browse ────────────────────────────────
+        if col_browse.button(
+            "", key="deck_browse_btn",
+            type="tertiary", icon=":material/visibility:",
+            use_container_width=True,
+            disabled=sel_deck_id is None
+        ):
+            st.session_state.selected_deck_id   = sel_deck_id
             st.session_state.selected_deck_mode = "browse"
             st.rerun()
 
-    with btn_cols[2]:
-        if sel_deck_id is not None:          # a deck is selected → real download button
-            cards_data = get_cards(sel_deck_id)
+        # ── Import ────────────────────────────────
+        if col_import.button(
+            "", key="deck_import_btn",
+            type="tertiary", icon=":material/upload:",
+            use_container_width=True
+        ):
+            import_deck_dialog()
+
+        # ── Export ────────────────────────────────
+        if sel_deck_id is not None:
             deck_json = json.dumps(
                 {
-                    "name": sel_deck_name,
-                    "cards": [{"front": c[1], "back": c[2]} for c in cards_data],
+                    "name":  sel_deck_name,
+                    "cards": [
+                        {"front": c[1], "back": c[2]} for c in get_cards(sel_deck_id)
+                    ],
                 },
                 indent=2,
             )
-            st.download_button(
-                label="Export",                         # <- single, immediate‑download button
+            col_export.download_button(
+                label="",
                 data=deck_json,
                 file_name=f"{sel_deck_name}.json",
                 mime="application/json",
                 key=f"download_deck_{sel_deck_id}",
+                type="tertiary",
+                icon=":material/download:",
+                use_container_width=True
             )
-        else:                                # nothing selected → disabled placeholder
-            st.button("Export", disabled=True, key="deck_export_btn_disabled")
+        else:
+            col_export.button(
+                "", disabled=True, key="deck_export_btn_disabled",
+                type="tertiary", icon=":material/download:",
+                use_container_width=True
+            )
 
-    with btn_cols[3]:
-        if st.button("Delete", key="deck_delete_btn", disabled=sel_deck_id is None):
+        # ── Delete ────────────────────────────────
+        if col_delete.button(
+            "", key="deck_delete_btn",
+            type="tertiary", icon=":material/delete:",
+            use_container_width=True,
+            disabled=sel_deck_id is None
+        ):
             st.session_state.deck_pending_delete = sel_deck_id
             st.rerun()
 
     # -------- Deletion confirmation --------
     pending_deck_id = st.session_state.get("deck_pending_delete")
-    if pending_deck_id is not None and pending_deck_id == sel_deck_id:
-        st.info(f"Delete deck **{sel_deck_name}**?")
+    if pending_deck_id is not None:
+        # look up the deck’s name so we can still show it even if the row isn’t selected
+        pending_name = next(
+            (name for d_id, name in decks_raw if d_id == pending_deck_id),
+            "this deck"
+        )
+        st.info(f"Delete deck **{pending_name}**?")
         c_yes, c_no = st.columns(2)
-        if c_yes.button("Yes – delete it", key="deck_delete_btn_yes"):
-            trash_deck(sel_deck_id)
+
+        if c_yes.button("Yes – delete it", key="deck_delete_btn_yes", use_container_width=True):
+            trash_deck(pending_deck_id)
             st.session_state.deck_pending_delete = None
             st.success("Deleted ✅")
             st.rerun()
-        if c_no.button("No – keep it", key="deck_delete_btn_no"):
+
+        if c_no.button("No – keep it", key="deck_delete_btn_no", use_container_width=True):
             st.session_state.deck_pending_delete = None
             st.rerun()
-
-    # -------- Import Deck button (create is now via the table) --------
-    if st.button("Import Deck"):
-        import_deck_dialog()
-
 
 # --------------------------------------------------------------
 #                   Notebooks Section
@@ -495,9 +540,9 @@ def render_notebooks_section() -> None:
     """
     import pandas as pd
 
-    st.markdown("## Notebooks")
+    st.markdown("<h2 style='text-align:center;'>Notebooks</h2>", unsafe_allow_html=True)
 
-    notebooks_raw = get_notebooks()             # [(id, name), …]
+    notebooks_raw = get_notebooks()            # [(id, name), …]
     if notebooks_raw:
         df_orig = pd.DataFrame(
             [
@@ -505,9 +550,7 @@ def render_notebooks_section() -> None:
                     "id": nb_id,
                     "Select": False,
                     "Notebook": nb_name,
-                    "new": 0,
-                    "learn": 0,
-                    "due": 0,
+                    **get_notebook_stats(nb_id)              # ← live New / Due figures
                 }
                 for nb_id, nb_name in notebooks_raw
             ]
@@ -574,42 +617,66 @@ def render_notebooks_section() -> None:
     sel_nb_id = int(sel_rows.iloc[0]["id"]) if not sel_rows.empty else None
     sel_nb_name = sel_rows.iloc[0]["Notebook"] if not sel_rows.empty else None
 
-    btn_cols = st.columns(4)
-    with btn_cols[0]:
-        if st.button("Review", key="nb_review_btn", disabled=True):
-            st.warning("Notebook‑review mode not implemented yet.")
+    # -------- Action buttons --------
+    with st.container():
+        btn_cols = st.columns(5)
 
-    with btn_cols[1]:
-        if st.button("Browse", key="nb_browse_btn", disabled=sel_nb_id is None):
-            st.session_state.selected_notebook_id = sel_nb_id
-            st.rerun()
+        # Review
+        if btn_cols[0].button("", key="nb_review_btn",
+                            type="tertiary", icon=":material/play_arrow:",
+                            use_container_width=True,
+                            disabled=sel_nb_id is None):
+            st.session_state.update(
+                selected_notebook_id = sel_nb_id,
+                selected_notebook_mode = "review",
+                review_note_id = None,
+                review_note_edit_mode = False,
+            ); st.rerun()
 
-    with btn_cols[2]:
+        # Browse
+        if btn_cols[1].button("", key="nb_browse_btn",
+                            type="tertiary", icon=":material/visibility:",
+                            use_container_width=True,
+                            disabled=sel_nb_id is None):
+            st.session_state.selected_notebook_id = sel_nb_id; st.rerun()
+
+        # Import
+        if btn_cols[2].button("", key="nb_import_btn",
+                            type="tertiary", icon=":material/upload:",
+                            use_container_width=True):
+            import_notebook_dialog()
+
+        # Export
         if sel_nb_id is not None:
-            notes_data = get_notes(sel_nb_id)
             nb_json = json.dumps(
                 {
                     "name": sel_nb_name,
-                    "notes": [
-                        {"tab_name": n[1], "content": n[2]} for n in notes_data
-                    ],
+                    "notes": [{"tab_name": n[1], "content": n[2]} for n in get_notes(sel_nb_id)],
                 },
                 indent=2,
             )
-            st.download_button(
-                label="Export",
+            btn_cols[3].download_button(
+                label="",
                 data=nb_json,
                 file_name=f"{sel_nb_name}.json",
                 mime="application/json",
                 key=f"download_nb_{sel_nb_id}",
+                type="tertiary",
+                icon=":material/download:",
+                use_container_width=True,
             )
         else:
-            st.button("Export", disabled=True, key="nb_export_btn_disabled")
+            btn_cols[3].button("", disabled=True, key="nb_export_btn_disabled",
+                            type="tertiary", icon=":material/download:",
+                            use_container_width=True)
 
-    with btn_cols[3]:
-        if st.button("Delete", key="nb_delete_btn", disabled=sel_nb_id is None):
-            st.session_state.notebook_pending_delete = sel_nb_id
-            st.rerun()
+        # Delete
+        if btn_cols[4].button("", key="nb_delete_btn",
+                            type="tertiary", icon=":material/delete:",
+                            use_container_width=True,
+                            disabled=sel_nb_id is None):
+            st.session_state.notebook_pending_delete = sel_nb_id; st.rerun()
+
 
     pending_nb_id = st.session_state.get("notebook_pending_delete")
     if pending_nb_id is not None and pending_nb_id == sel_nb_id:
@@ -623,9 +690,6 @@ def render_notebooks_section() -> None:
         if c_no.button("No – keep it", key="nb_delete_btn_no"):
             st.session_state.notebook_pending_delete = None
             st.rerun()
-
-    if st.button("Import Notebook"):
-        import_notebook_dialog()
 
 def _clear_new_row(df_key: str, row_idx):
     """
@@ -641,232 +705,364 @@ def _clear_new_row(df_key: str, row_idx):
 #         Notebook Detail (Browse Selected Notebook)
 # --------------------------------------------------------------
 
-def render_notebook_detail(notebook_id: int):
-    """Shows a single notebook page with Back, Add, Delete, and tab‑by‑tab content or editing, now with GraphViz preview."""
-    from utils.notes_db import c as notes_c
+def render_notebook_detail(nb_id: int):
+    import pandas as pd
+    from utils.notes_db import c as notes_c, conn as notes_conn
 
-    notes_c.execute("SELECT name FROM notebooks WHERE id = ?", (notebook_id,))
+    # ---------- load ----------
+    notes_c.execute("SELECT name FROM notebooks WHERE id = ?", (nb_id,))
     row = notes_c.fetchone()
-
     if not row:
-        st.error("This notebook does not exist.")
-        st.session_state.selected_notebook_id = None
-        return
-    notebook_name = row[0]
+        st.error("Notebook missing."); st.session_state.selected_notebook_id = None; return
+    nb_name = row[0]
 
-    # Fetch existing tabs
-    notes = get_notes(notebook_id)  # each => (id, tab_name, content)
+    st.markdown(f"<h2 style='text-align:center;'>{nb_name}</h2>", unsafe_allow_html=True)
 
-    # If no tabs => create a default tab automatically
+    # ---------- Back / Reset Stats ----------
+    hcols = st.columns(2)
+    if hcols[0].button("Back", use_container_width=True):
+        st.session_state.selected_notebook_id = None; st.rerun()
+    if hcols[1].button("Reset Stats", use_container_width=True):
+        _reset_notebook_stats(nb_id, notes_c, notes_conn)
+        st.success("All SM‑2 data reset."); st.rerun()
+
+    # ---------- notes list ----------
+    notes = get_notes(nb_id)
     if not notes:
-        create_note(notebook_id, "Default", DEFAULT_TAB_CONTENT)
+        create_note(nb_id, "Default", DEFAULT_TAB_CONTENT); st.rerun()
+
+    df_orig = pd.DataFrame(
+        [{"id": nid, "Select": False, "Tab": t} for nid, t, _ in notes]
+    )
+    edited = st.data_editor(
+        df_orig,
+        column_config={
+            "id":     st.column_config.TextColumn(disabled=True),
+            "Select": st.column_config.CheckboxColumn("Select"),
+            "Tab":    st.column_config.TextColumn("Tab Name"),
+        },
+        num_rows="fixed",
+        hide_index=True,
+        use_container_width=True,
+        key=f"nb_editor_{nb_id}",
+    )
+
+    # inline rename
+    delta = (edited.merge(df_orig, on="id", suffixes=("_new", "_old"))
+                    .query("Tab_new != Tab_old"))
+    for _, r in delta.iterrows():
+        rename_note(int(r["id"]), r["Tab_new"].strip())
+
+    # ---------- existing edit‑mode? ----------
+    if st.session_state.get("editing_tab_id"):
+        _render_tab_edit_form(nb_id)  # defined just below
+        return
+
+    # ---------- selection ----------
+    sel = edited[edited["Select"].fillna(False)]
+    sel_id = int(sel.iloc[0]["id"]) if not sel.empty else None
+    selected_note = next((n for n in notes if n[0] == sel_id), None)
+
+    # ---------- button bar (Add‑Tab left of Edit) ----------
+    bcols = st.columns(4)
+    if bcols[0].button("Add Tab", use_container_width=True):
+        new_id = create_note(nb_id, "New Tab", "")
+        st.session_state.editing_tab_id = new_id; st.rerun()
+
+    if bcols[1].button("Edit", disabled=sel_id is None, use_container_width=True):
+        st.session_state.editing_tab_id = sel_id; st.rerun()
+
+    if bcols[2].button("Stats", disabled=sel_id is None, use_container_width=True):
+        cur = st.session_state.get("selected_stats_note_id")
+        st.session_state.selected_stats_note_id = None if cur == sel_id else sel_id
         st.rerun()
 
-    # -- Top row: Back
-    top_cols = st.columns([2, 8])
-    with top_cols[0]:
-        if st.button("Back", key="notebook_back_btn"):
-            st.session_state.selected_notebook_id = None
-            st.rerun()
+    if bcols[3].button("Delete", disabled=sel_id is None, use_container_width=True):
+        delete_note(sel_id); st.success("Deleted."); st.rerun()
 
-    top_cols[1].markdown(f"<h2 style='text-align:left;'>{notebook_name}</h2>", unsafe_allow_html=True)
-
-    # -- Second row: Add and Delete
-    ad_cols = st.columns([1, 1, 8])
-    with ad_cols[0]:
-        if st.button("Add", key="notebook_add_tab_btn"):
-            # Create a new empty tab
-            new_tab_id = create_note(notebook_id, "New Tab", "")
-            # If we had exactly 1 tab named "Default", remove it
-            if len(notes) == 1 and notes[0][1] == "Default":
-                delete_note(notes[0][0])
-            # Immediately open the newly created tab in edit mode
-            st.session_state.editing_tab_id = new_tab_id
-            st.rerun()
-
-    with ad_cols[1]:
-        if st.button("Delete", key="notebook_delete_tab_btn"):
-            st.session_state.delete_tab_dialog_open = True
-            st.rerun()
-
-    # If user triggered the Delete Tab dialog
-    if st.session_state.get("delete_tab_dialog_open"):
-        delete_tab_dialog(notebook_id)
-
-    st.markdown("---")
-
-    # Build the tab labels
-    tab_labels = [n[1] for n in notes]
-    tab_objects = st.tabs(tab_labels)
-
-    for i, (note_id, tab_name, content) in enumerate(notes):
-        with tab_objects[i]:
-            is_editing = (st.session_state.editing_tab_id == note_id)
-
-            if not is_editing:
-                # -------------------- VIEW MODE -------------------------
-                code = _extract_graphviz(content)
-                if code:
-                    st.graphviz_chart(code, use_container_width=True)
-                else:
-                    st.markdown(content if content else "*[Empty note]*", unsafe_allow_html=True)
-                st.write("")
-                if st.button("Edit", key=f"edit_tab_btn_{note_id}"):
-                    st.session_state.editing_tab_id = note_id
-                    st.rerun()
+    # ---------- preview / stats ----------
+    if selected_note:
+        _, tab, body = selected_note
+        with st.container(border=True):
+            st.markdown(f"### {tab}", unsafe_allow_html=True)
+            code = _extract_graphviz(body)
+            if code:
+                st.graphviz_chart(code, use_container_width=True)
             else:
-                # -------------------- EDIT MODE -------------------------
-                with st.form(key=f"edit_tab_form_{note_id}", clear_on_submit=False):
-                    new_tab_name = st.text_input("Tab Name", value=tab_name, key=f"tab_name_input_{note_id}")
-                    new_content = st.text_area("Content:", value=content, height=300, key=f"tab_content_input_{note_id}")
+                st.markdown(body or "*[Empty]*", unsafe_allow_html=True)
 
-                    s1, s2 = st.columns(2)
-                    with s1:
-                        if st.form_submit_button("Save"):
-                            rename_note(note_id, new_tab_name)
-                            update_note(note_id, new_content)
-                            st.session_state.editing_tab_id = None
-                            st.rerun()
-                    with s2:
-                        if st.form_submit_button("Cancel"):
-                            st.session_state.editing_tab_id = None
-                            st.rerun()
+            if st.session_state.get("selected_stats_note_id") == sel_id:
+                _, _, _, _, nr, interval, rep, ef = get_note_by_id(sel_id)
+                nr_str = nr.split("T")[0] if nr else "—"
+                st.markdown(
+                    f"<p style='text-align:center;'><em>"
+                    f"Next {nr_str} &nbsp;|&nbsp; {interval} d &nbsp;|&nbsp; "
+                    f"Rep {rep} &nbsp;|&nbsp; EF {ef:.2f}</em></p>",
+                    unsafe_allow_html=True
+                )
+    else:
+        st.markdown("<p style='text-align:center;'>Select a tab to preview.</p>",
+                    unsafe_allow_html=True)
 
+
+# ---------- inline tab‑edit helper ----------
+def _render_tab_edit_form(nb_id: int):
+    note_id = st.session_state.editing_tab_id
+    note = get_note_by_id(note_id)
+    if not note:
+        st.error("Note not found."); st.session_state.editing_tab_id = None; return
+    _, _, tab_name, content, *_ = note
+
+    with st.container(border=True):
+        with st.form(f"edit_tab_{note_id}", clear_on_submit=False):
+            new_tab = st.text_input("Tab Name", value=tab_name)
+            new_body = st.text_area("Content", value=content, height=300)
+            c1, c2 = st.columns(2)
+            if c1.form_submit_button("Save", use_container_width=True):
+                rename_note(note_id, new_tab)
+                update_note(note_id, new_body)
+                st.session_state.editing_tab_id = None
+                st.success("Saved!"); st.rerun()
+            if c2.form_submit_button("Cancel", use_container_width=True):
+                st.session_state.editing_tab_id = None; st.rerun()
+
+        
+def _reset_notebook_stats(nb_id: int, notes_c, notes_conn):
+    notes_c.execute(
+        """
+        UPDATE notes
+           SET next_review = NULL,
+               interval     = 0,
+               repetition   = 0,
+               ef           = 2.5
+         WHERE notebook_id = ?
+        """,
+        (nb_id,)
+    )
+    notes_conn.commit()
+
+def render_notebook_review(nb_id: int):
+    # --- Header & back ----
+    top = st.columns([2,8])
+    if top[0].button("Back", key="nb_rev_back", use_container_width=True):
+        st.session_state.update(
+            selected_notebook_id=None,
+            selected_notebook_mode=None,
+            review_note_id=None,
+            review_note_edit_mode=False,
+        )
+        st.rerun()
+
+    # notebook title & counters
+    stats = get_notebook_stats(nb_id)
+    name = [n for n in get_notebooks() if n[0]==nb_id][0][1]
+    top[1].markdown(
+        f"<h2 style='text-align:left;'>{name} — Review</h2>"
+        f"<p>New: {stats['new']} | Due: {stats['due']}</p>",
+        unsafe_allow_html=True)
+
+    if stats["new"]==0 and stats["due"]==0:
+        st.success("🎉  Nothing to review right now!")
+        return
+
+    notes = get_notes_full(nb_id)
+    if not notes:
+        st.info("Notebook is empty.")
+        return
+
+    # pick current note
+    if st.session_state.review_note_id is None:
+        st.session_state.review_note_id = notes[0][0]
+    note = get_note_by_id(st.session_state.review_note_id)
+    if not note:
+        st.error("Note not found."); return
+
+    note_id, _, tab_name, content, nr, interval, repetition, ef = note
+    st.markdown(f"### {tab_name}")
+
+    # -------- EDIT MODE ----------------------------
+    if st.session_state.review_note_edit_mode:
+        with st.form("edit_note_review", clear_on_submit=False):
+            new_tab = st.text_input("Tab Name", value=tab_name)
+            new_body= st.text_area("Content", value=content, height=300)
+            e1,e2 = st.columns(2)
+            with e2:
+                if st.form_submit_button("Save"):
+                    rename_note(note_id, new_tab)
+                    update_note(note_id, new_body)
+                    st.success("Updated!")
+                    st.session_state.review_note_edit_mode=False
+                    st.rerun()
+            with e1:
+                if st.form_submit_button("Cancel"):
+                    st.session_state.review_note_edit_mode=False
+                    st.rerun()
+        return  # stop, the form already rendered
+    # -------- VIEW MODE ----------------------------
+    code = _extract_graphviz(content)
+    if code:
+        st.graphviz_chart(code, use_container_width=True)
+    else:
+        st.markdown(content if content.strip() else "*[Empty note]*",
+                    unsafe_allow_html=True)
+
+    st.divider()
+
+    # ---- grading projections row ---------------
+    proj_a = format_interval_short(project_interval_note(note, 0))
+    proj_h = format_interval_short(project_interval_note(note, 3))
+    proj_g = format_interval_short(project_interval_note(note, 4))
+    proj_e = format_interval_short(project_interval_note(note, 5))
+
+    ph = st.columns([2,1,1,1,1])
+    ph[1].markdown(proj_a); ph[2].markdown(proj_h)
+    ph[3].markdown(proj_g); ph[4].markdown(proj_e)
+
+    pb = st.columns([2,1,1,1,1])
+    if pb[0].button("Edit", key="nb_rev_edit"):
+        st.session_state.review_note_edit_mode=True; st.rerun()
+    if pb[1].button("Again"):
+        update_sm2_note(note_id, 0); _next_note(nb_id)
+    if pb[2].button("Hard"):
+        update_sm2_note(note_id, 3); _next_note(nb_id)
+    if pb[3].button("Good"):
+        update_sm2_note(note_id, 4); _next_note(nb_id)
+    if pb[4].button("Easy"):
+        update_sm2_note(note_id, 5); _next_note(nb_id)
+
+def _next_note(nb_id):
+    from utils.notes_db import get_notes_full
+    notes = get_notes_full(nb_id)
+    if not notes: return
+    ids = [n[0] for n in notes]
+    cur = st.session_state.review_note_id
+    idx = ids.index(cur) if cur in ids else -1
+    st.session_state.review_note_id = ids[(idx+1)%len(ids)]
+    st.session_state.review_note_edit_mode=False
+    st.rerun()
 
 # --------------------------------------------------------------
 #         Deck Detail (Browse Selected Deck) & Review
 # --------------------------------------------------------------
-def render_deck_detail(deck_id):
+# --------------------------------------------------------------
+#            Deck Detail (Browse Selected Deck)  FINAL
+# --------------------------------------------------------------
+def render_deck_detail(deck_id: int):
+    import pandas as pd
     from utils.flashcards_db import c
+
+    # ---------- load deck ----------
     c.execute("SELECT name FROM decks WHERE id = ?", (deck_id,))
     row = c.fetchone()
     if not row:
-        st.error("This deck does not exist.")
-        st.session_state.selected_deck_id = None
+        st.error("Deck not found.")
+        st.session_state.update(selected_deck_id=None, selected_deck_mode=None)
         return
-
     deck_name = row[0]
-    top_row = st.columns([2, 8, 2])
-    if top_row[0].button("Back", key="deck_back_btn", use_container_width=True):
-        st.session_state.selected_deck_id = None
-        st.session_state.selected_deck_mode = None
+
+    # ---------- header ----------
+    st.markdown(f"<h2 style='text-align:center;'>{deck_name}</h2>", unsafe_allow_html=True)
+    hcols = st.columns(2)
+    if hcols[0].button("Back", use_container_width=True):
+        st.session_state.update(selected_deck_id=None,
+                                selected_deck_mode=None,
+                                selected_card_id=None,
+                                add_new_card=False)
         st.rerun()
+    if hcols[1].button("Reset Deck", use_container_width=True):
+        st.session_state.deck_pending_reset = deck_id; st.rerun()
 
-    top_row[1].markdown(f"<h2 style='text-align:left;'>{deck_name}</h2>", unsafe_allow_html=True)
+    if st.session_state.get("deck_pending_reset") == deck_id:
+        st.info("Permanently reset all SM‑2 data?")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, reset", use_container_width=True):
+            reset_deck(deck_id); st.success("Deck reset!")
+            st.session_state.deck_pending_reset = None; st.rerun()
+        if c2.button("No, cancel", use_container_width=True):
+            st.session_state.deck_pending_reset = None; st.rerun()
 
-    if top_row[2].button("Reset Deck", key="reset_deck_btn", use_container_width=True):
-        st.session_state.deck_pending_reset = deck_id
-        st.rerun()
+    # ---------- data table ----------
+    cards_raw = get_cards(deck_id)
+    if not cards_raw:
+        st.info("No cards yet."); return
 
-    if st.session_state.deck_pending_reset == deck_id:
-        st.info(f"Are you sure you want to permanently reset SM‑2 stats for '{deck_name}'?")
-        cc = st.columns(2)
-        if cc[0].button("Yes", key="reset_deck_yes_btn", use_container_width=True):
-            reset_deck(deck_id)
-            st.success("Deck reset successfully!")
-            st.session_state.deck_pending_reset = None
-            st.rerun()
-        if cc[1].button("No", key="reset_deck_no_btn", use_container_width=True):
-            st.session_state.deck_pending_reset = None
-            st.rerun()
+    df_orig = pd.DataFrame(
+        [{"id": cid, "Select": False, "Front": f, "Back": b} for cid, f, b in cards_raw]
+    )
+    edited = st.data_editor(
+        df_orig,
+        column_config={
+            "id":     st.column_config.TextColumn(disabled=True),
+            "Select": st.column_config.CheckboxColumn("Select"),
+            "Front":  st.column_config.TextColumn("Front"),
+            "Back":   st.column_config.TextColumn("Back"),
+        },
+        num_rows="fixed",
+        hide_index=True,
+        use_container_width=True,
+        key=f"cards_editor_{deck_id}",
+    )
 
-    # If we’re editing the deck fields
-    if deck_id not in st.session_state.deck_fields:
-        st.session_state.deck_fields[deck_id] = ["Front", "Back"]
-    if st.session_state.get("edit_fields", False):
-        render_edit_fields(deck_id)
-        return
+    # inline name/side edits
+    delta = (edited.merge(df_orig, on="id", suffixes=("_new", "_old"))
+                    .query("Front_new != Front_old or Back_new != Back_old"))
+    for _, r in delta.iterrows():
+        update_card(int(r["id"]), r["Front_new"].strip(), r["Back_new"].strip())
 
-    # If we’re editing a specific card
-    card_to_edit = None
-    if st.session_state.selected_card_id:
-        card_to_edit = get_card_by_id(st.session_state.selected_card_id)
-    editing = (card_to_edit is not None)
+    # ---------- selection ----------
+    sel = edited[edited["Select"].fillna(False)]
+    sel_id = int(sel.iloc[0]["id"]) if not sel.empty else None
 
-    # Render form for adding or editing a single card
-    render_card_form(deck_id, editing, card_to_edit)
-    st.divider()
+    # ---------- buttons (Add left of Edit) ----------
+    bcols = st.columns(4)
+    if bcols[0].button("Add New Card", use_container_width=True):
+        st.session_state.add_new_card = True
+        st.session_state.selected_card_id = None; st.rerun()
 
-    # Show existing cards
-    cards_data = get_cards(deck_id)
-    if not cards_data:
-        st.info("No cards to display.")
-        return
+    if bcols[1].button("Edit", disabled=sel_id is None, use_container_width=True):
+        st.session_state.selected_card_id = sel_id
+        st.session_state.add_new_card = False; st.rerun()
 
-    ccols = st.columns([1, 6])
-    with ccols[1]:
-        hh = st.columns([1, 2, 1, 1, 1, 1])
-        hh[0].markdown("**ID**")
-        hh[1].markdown("**Front**")
-        for (card_id, front, back) in cards_data:
-            row = st.columns([1, 2, 1, 1, 1, 1])
-            row[0].write(card_id)
-            row[1].write(front)
+    if bcols[2].button("Stats", disabled=sel_id is None, use_container_width=True):
+        cur = st.session_state.get("selected_stats_card_id")
+        st.session_state.selected_stats_card_id = None if cur == sel_id else sel_id
+        st.session_state.add_new_card = False; st.rerun()
 
-            if row[2].button("View", key=f"view_{card_id}", use_container_width=True):
-                if st.session_state.view_card_id == card_id:
-                    st.session_state.view_card_id = None
-                    st.session_state.view_show_answer = False
-                else:
-                    st.session_state.view_card_id = card_id
-                    st.session_state.view_show_answer = False
-                st.rerun()
+    if bcols[3].button("Delete", disabled=sel_id is None, use_container_width=True):
+        delete_card(sel_id); st.success("Deleted."); st.rerun()
 
-            if row[3].button("Edit", key=f"edit_{card_id}", use_container_width=True):
-                st.session_state.selected_card_id = card_id
-                st.rerun()
+    # ---------- preview / form area ----------
+    with st.container(border=True):
+        # ADD mode
+        if st.session_state.get("add_new_card"):
+            render_card_form(deck_id, editing=False, card_data=None)
+            return
 
-            if row[4].button("Stats", key=f"stats_{card_id}", use_container_width=True):
-                if st.session_state.get("selected_stats_card_id") == card_id:
-                    st.session_state.selected_stats_card_id = None
-                else:
-                    st.session_state.selected_stats_card_id = card_id
-                st.rerun()
+        # EDIT mode
+        if st.session_state.get("selected_card_id"):
+            cd = get_card_by_id(st.session_state.selected_card_id)
+            if cd:
+                render_card_form(deck_id, editing=True, card_data=cd)
+            return
 
-            if row[5].button("Delete", key=f"delete_{card_id}", use_container_width=True):
-                delete_card(card_id)
-                st.success("Card deleted!")
-                st.rerun()
-
-            # If user clicked "Stats"
-            if st.session_state.get("selected_stats_card_id") == card_id:
-                card_full = get_card_by_id(card_id)
-                if card_full:
-                    _, _, _, _, next_review, interval, repetition, ef, _ = card_full
-                    nr_str = "Not scheduled"
-                    if next_review:
-                        nr_str = datetime.fromisoformat(next_review).strftime("%Y-%m-%d %H:%M:%S")
+        # PREVIEW mode
+        if sel_id:
+            card = get_card_by_id(sel_id)
+            if card:
+                _, _, ftxt, btxt, *_ = card
+                render_card_visual(ftxt, btxt, show_back=True)
+                if st.session_state.get("selected_stats_card_id") == sel_id:
+                    _, _, _, _, nr, interval, rep, ef, _ = card
+                    nr_str = nr.split("T")[0] if nr else "—"
                     st.markdown(
-                        f"<div style='margin-left:40px;'>"
-                        f"<strong>Next Review:</strong> {nr_str}<br>"
-                        f"<strong>Interval:</strong> {interval} day(s)<br>"
-                        f"<strong>Repetition:</strong> {repetition}<br>"
-                        f"<strong>Ease Factor:</strong> {ef:.2f}"
-                        f"</div><br>",
+                        f"<p style='text-align:center;'><em>"
+                        f"Next {nr_str} &nbsp;|&nbsp; {interval} d &nbsp;|&nbsp; "
+                        f"Rep {rep} &nbsp;|&nbsp; EF {ef:.2f}</em></p>",
                         unsafe_allow_html=True
                     )
-
-    # If "View" is toggled
-    if st.session_state.view_card_id:
-        card_to_view = get_card_by_id(st.session_state.view_card_id)
-        if card_to_view:
-            _, _, f_text, b_text, _, _, _, _, extra_json = card_to_view
-            extras = {}
-            if extra_json:
-                try:
-                    extras = json.loads(extra_json)
-                except:
-                    extras = {}
-            st.markdown("---")
-            st.markdown("### Card Preview")
-            render_card_visual(f_text, b_text, extras=extras, show_back=st.session_state.view_show_answer)
-            if st.button("Toggle Answer View", key="toggle_answer_view_btn"):
-                st.session_state.view_show_answer = not st.session_state.view_show_answer
-            if st.button("Done Viewing", key="done_viewing_btn"):
-                st.session_state.view_card_id = None
-                st.session_state.view_show_answer = False
-                st.rerun()
-
+        else:
+            st.markdown("<p style='text-align:center;'>Select a card to preview.</p>",
+                        unsafe_allow_html=True)
 
 def render_deck_review(deck_id):
     from utils.flashcards_db import c
@@ -1189,6 +1385,50 @@ def render_generation_sidebar():
                 st.session_state.generated_view = True
                 st.rerun()
 
+        render_chatbot_sidebar()
+
+# ---------------------------------------------------------------------
+#                       Chatbot (Sidebar)
+# ---------------------------------------------------------------------
+def render_chatbot_sidebar():
+    """
+    Fully‑featured OpenAI chatbot.
+    (Logic copied from 4_Chatbot.py – only the location changed.)
+    """
+    st.divider()                      # ← required divider under Generate
+    st.markdown("## Chatbot 💬")
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+
+    # Initialise chat history once
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "How can I help you?"}
+        ]
+
+    # Display history
+    for m in st.session_state.messages:
+        st.chat_message(m["role"]).write(m["content"])
+
+    # Handle new user input
+    if prompt := st.chat_input("Ask me anything…"):
+        if not openai_api_key:
+            st.info("Please add an OpenAI API key to continue.")
+            st.stop()
+
+        client = OpenAI(api_key=openai_api_key)
+
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").write(prompt)
+
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=st.session_state.messages,
+        )
+        reply = resp.choices[0].message.content
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.chat_message("assistant").write(reply)
+
 # --------------------------------------------------------------
 #   Dedicated Window for Viewing Generated Items (cards & notes)
 # --------------------------------------------------------------
@@ -1465,7 +1705,6 @@ def main():
     init_flashcards_db()
     update_db_schema()  # adds columns if missing
     init_notes_db()
-
     init_session_state()
 
     # --- Sidebar generation tool (always available) ---
@@ -1476,8 +1715,6 @@ def main():
         render_generated_items_window()
         return
 
-    # --- Title ---
-    st.markdown("<div style='text-align: center; font-size: 36px;'><strong>Study Dashboard</strong></div>", unsafe_allow_html=True)
     st.text("")
 
     # --- Regular routing ---
@@ -1488,15 +1725,19 @@ def main():
             render_deck_review(st.session_state.selected_deck_id)
 
     elif st.session_state.selected_notebook_id is not None:
-        render_notebook_detail(st.session_state.selected_notebook_id)
+        if st.session_state.get("selected_notebook_mode") == "review":
+            render_notebook_review(st.session_state.selected_notebook_id)
+        else:
+            render_notebook_detail(st.session_state.selected_notebook_id)
 
     else:
         # Main dashboard
         render_decks_section()
-        st.markdown("---")
+        st.divider()
         render_notebooks_section()
-        # The old bottom‑of‑page Tools section has been removed now that the
-        # generator lives permanently in the sidebar.
+        st.divider()                 # << NEW spacer under notebooks
+        render_quiz_section()        # << QUIZ now lives in‑page
+
 
 
 if __name__ == "__main__":
