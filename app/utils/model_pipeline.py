@@ -75,6 +75,15 @@ class ModelPipeline:
         else:
             logger.error("Neither file_path nor url provided to generate_flashcards.")
             return results
+        
+    def generate_notes(self, *, file_path=None, url=None, media_path=None):
+        # reuse generate_flashcards but pass the sentinel type
+        return self.generate_flashcards(
+            file_path=file_path,
+            url=url,
+            media_path=media_path,
+            flashcard_type="note"                 # will trigger _run_note_flow
+        )
 
     def _run_generic_flow(
         self,

@@ -1,11 +1,8 @@
 # file_helper.py
 
-import os
-import io
-import json
-import base64
-import shutil
-import tempfile
+from __future__ import annotations
+import os, io, json, base64, shutil, tempfile, re
+from typing import List
 
 from PIL import Image
 from rich.console import Console
@@ -266,13 +263,54 @@ class FileHelper:
 
         new_card = model_schemas.FlashcardItem.model_validate_json(response)
         return new_card
+    
+    def regenerate_note(self, note: "model_schemas.NoteItem"):
+        from utils.model_helper import ModelHelper
+        from utils.prompts import REGENERATE_NOTE_PROMPT
 
-    # Dispatch table mapping content types to their read functions.
-    READ_DISPATCH = {
-        'text': _get_plain_text,
-        'image': lambda path: FileHelper._get_img_uri(Image.open(path)),
-        'pdf': lambda path: FileHelper._get_img_uri(FileHelper._get_image(path)[0]) if FileHelper._get_image(path) else "",
-    }
+        helper = ModelHelper()
+
+        payload = json.dumps(
+            {
+                "original title": note.title,
+                "original content": note.content,
+                "context": note.data or ""
+            },
+            ensure_ascii=False
+        )
+
+        response = helper.get_flashcards(      # keeps convo util
+            conversation=[],
+            system_message=REGENERATE_NOTE_PROMPT,
+            user_text=payload,
+            run_as_image=False,
+            response_format=model_schemas.NoteItem
+        )
+        
+        return model_schemas.NoteItem.model_validate_json(response)
+    
+    def regenerate_graph(self, graph_note: "model_schemas.NoteItem", *, graph_type: str):
+        from utils.model_helper import ModelHelper
+        from utils.prompts import REGENERATE_GRAPH_PROMPT
+
+        helper = ModelHelper()
+        payload = json.dumps(
+            {
+                "original title": graph_note.title,
+                "original content": graph_note.content,
+                "context": graph_note.data or "",
+                "graph_type": graph_type,
+            },
+            ensure_ascii=False,
+        )
+        response = helper.get_flashcards(
+            conversation=[],
+            system_message=REGENERATE_GRAPH_PROMPT,
+            user_text=payload,
+            run_as_image=False,
+            response_format=model_schemas.NoteItem,
+        )
+        return model_schemas.NoteItem.model_validate_json(response)
 
     def generate_flashcards_pipeline(self, text: str, flashcard_type='general'):
         """
@@ -310,3 +348,65 @@ class FileHelper:
             os.remove(temp_file_path)
         
         return models
+    
+    def generate_notes_pipeline(self, text: str):
+        """
+        Produce study **notes** from *text* and return a list[model_schemas.Note]
+        """
+        from utils.model_pipeline import ModelPipeline
+        pipeline = ModelPipeline(media_dir=self.get_media_path())
+
+        if text.startswith("data:image"):
+            models = pipeline._process_chunks(
+                chunks=[{"title": "Uploaded Image", "content": text}],
+                card_type="note",                  # key flag
+                url_name="",
+                file_name="uploaded_image.png",
+                content_type="image",
+                media_path=self.get_media_path()
+            )
+        else:
+            tmp = os.path.join(self.get_media_path(), "temp_note.txt")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            models = pipeline.generate_notes(file_path=tmp, media_path=self.get_media_path())
+            os.remove(tmp)
+        return models
+    
+    def generate_graphs_pipeline(self, text: str, graph_type: str):
+        """Return **list[model_schemas.NoteItem]** representing either
+        a *mind map* or a *knowledge graph* generated from *text*.
+        """
+        from utils.model_helper import ModelHelper
+        from utils.prompts import (
+            MIND_MAP_GENERATION_PROMPT,
+            KNOWLEDGE_GRAPH_GENERATION_PROMPT,
+        )
+
+        prompt = (
+            MIND_MAP_GENERATION_PROMPT
+            if graph_type == "mind_map"
+            else KNOWLEDGE_GRAPH_GENERATION_PROMPT
+        )
+
+        helper = ModelHelper()
+        # We bypass the bigger chunk‑merging pipeline – for graphs we want a
+        # holistic view.  The *NoteItem* response keeps the data model simple.
+        response = helper.get_flashcards(
+            conversation=[],
+            system_message=prompt,
+            user_text=text,
+            run_as_image=False,
+            response_format=model_schemas.NoteItem,
+        )
+        note = model_schemas.NoteItem.model_validate_json(response)
+        if not re.search(r"```(?:graphviz|dot)\s", note.content, re.IGNORECASE):
+            note.content = f"```graphviz\n{note.content.strip()}\n```"
+        return [note]
+
+    # Dispatch table mapping content types to their read functions.
+    READ_DISPATCH = {
+        'text': _get_plain_text,
+        'image': lambda path: FileHelper._get_img_uri(Image.open(path)),
+        'pdf': lambda path: FileHelper._get_img_uri(FileHelper._get_image(path)[0]) if FileHelper._get_image(path) else "",
+    }

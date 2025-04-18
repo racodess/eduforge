@@ -1,10 +1,10 @@
 # 2_Study.py
 
+import re
 import json
 from datetime import datetime
 import streamlit as st
 
-# --- DB modules (unchanged) ---
 from utils.flashcards_db import (
     init_db as init_flashcards_db,
     update_db_schema,
@@ -16,12 +16,8 @@ from utils.notes_db import (
     get_notebooks, create_notebook, delete_notebook, rename_notebook,
     get_notes, create_note, update_note, rename_note, delete_note
 )
-
-# --- SM-2 and other flashcards utilities (unchanged) ---
 from utils.flashcards_sm2 import update_sm2, project_interval, format_interval_short
 from utils.flashcards_ui import render_card_visual, render_card_form
-
-# --- Helper for AI generation / file processing ---
 from utils.file_helper import FileHelper
 
 
@@ -505,11 +501,14 @@ def render_notebooks_section():
 # --------------------------------------------------------------
 #         Notebook Detail (Browse Selected Notebook)
 # --------------------------------------------------------------
+
 def render_notebook_detail(notebook_id: int):
-    """Shows a single notebook page with Back, Add, Delete, and tab-by-tab content or editing."""
+    """Shows a single notebook page with Back, Add, Delete, and tab‑by‑tab content or editing, now with GraphViz preview."""
     from utils.notes_db import c as notes_c
+
     notes_c.execute("SELECT name FROM notebooks WHERE id = ?", (notebook_id,))
     row = notes_c.fetchone()
+
     if not row:
         st.error("This notebook does not exist.")
         st.session_state.selected_notebook_id = None
@@ -558,23 +557,26 @@ def render_notebook_detail(notebook_id: int):
     st.markdown("---")
 
     # Build the tab labels
-    tab_labels = [n[1] for n in notes]  # n[1] = tab_name
+    tab_labels = [n[1] for n in notes]
     tab_objects = st.tabs(tab_labels)
 
     for i, (note_id, tab_name, content) in enumerate(notes):
         with tab_objects[i]:
-            # Check if we're editing THIS tab
             is_editing = (st.session_state.editing_tab_id == note_id)
 
             if not is_editing:
-                # View mode
-                st.markdown(content if content else "*[Empty note]*", unsafe_allow_html=True)
+                # -------------------- VIEW MODE -------------------------
+                code = _extract_graphviz(content)
+                if code:
+                    st.graphviz_chart(code, use_container_width=True)
+                else:
+                    st.markdown(content if content else "*[Empty note]*", unsafe_allow_html=True)
                 st.write("")
                 if st.button("Edit", key=f"edit_tab_btn_{note_id}"):
                     st.session_state.editing_tab_id = note_id
                     st.rerun()
             else:
-                # Edit mode
+                # -------------------- EDIT MODE -------------------------
                 with st.form(key=f"edit_tab_form_{note_id}", clear_on_submit=False):
                     new_tab_name = st.text_input("Tab Name", value=tab_name, key=f"tab_name_input_{note_id}")
                     new_content = st.text_area("Content:", value=content, height=300, key=f"tab_content_input_{note_id}")
@@ -892,34 +894,72 @@ def render_edit_fields(deck_id):
 def render_generation_sidebar():
     """Generation tool now lives permanently in the sidebar."""
     with st.sidebar:
-        st.markdown("## Generate Flashcards")
+        st.markdown("## Generate Study Material")
 
-        # --- Select target deck ---
-        decks = get_decks()
-        if not decks:
-            st.error("No decks available. Please create a deck first.")
-            return
-
-        deck_options = {dname: did for (did, dname) in decks}
-        default_deck_name = list(deck_options.keys())[0]
-        selected_deck_name = st.selectbox(
-            "Select Deck to Add Flashcards",
-            options=list(deck_options.keys()),
-            index=list(deck_options.keys()).index(default_deck_name)
+        # pick study‑material type
+        study_types = st.multiselect(
+            "Select study material type(s)",
+            options=[
+                "Flashcards",
+                "Notebooks", # traditional markdown notes
+                "Mind Maps",
+            ],
+            key="gen_study_types",
         )
-        st.session_state.gen_target_deck_id = deck_options[selected_deck_name]
 
-        # --- File / text / URL inputs ---
+        # dynamically show target multiselect
+        # Flashcard decks selection
+        if "Flashcards" in study_types:
+            decks = get_decks()
+            if not decks:
+                st.error("No decks available. Please create a deck first.")
+                return
+            deck_opts = {dname: did for did, dname in decks}
+            st.session_state.gen_target_deck_ids = st.multiselect(
+                "Target deck(s)",
+                options=list(deck_opts.keys()),
+                default=list(deck_opts.keys())[:1],
+                key="gen_deck_select",
+            )
+            st.session_state.gen_target_deck_ids = [
+                deck_opts[name] for name in st.session_state.gen_target_deck_ids
+            ]
+        else:
+            st.session_state.pop("gen_target_deck_ids", None)
+
+        # ALL notebook‑bound study types (notes *and* graphs)
+        needs_notebooks = any(
+            t in study_types for t in ["Notebooks", "Mind Maps"]
+        )
+        if needs_notebooks:
+            notebooks = get_notebooks()
+            if not notebooks:
+                st.error("No notebooks available. Please create one first.")
+                return
+            nb_opts = {nname: nid for nid, nname in notebooks}
+            st.session_state.gen_target_nb_ids = st.multiselect(
+                "Target notebook(s)",
+                options=list(nb_opts.keys()),
+                default=list(nb_opts.keys())[:1],
+                key="gen_nb_select",
+            )
+            st.session_state.gen_target_nb_ids = [
+                nb_opts[name] for name in st.session_state.gen_target_nb_ids
+            ]
+        else:
+            st.session_state.pop("gen_target_nb_ids", None)
+
+        # shared content inputs
         file_helper = FileHelper()
 
         uploaded_file = st.file_uploader(
             label="Upload a .txt, .pdf, or image file",
             type=["txt", "pdf", "png", "jpg", "jpeg", "gif"],
-            key="gen_file_uploader"
+            key="gen_file_uploader",
         )
 
         page_range = None
-        if uploaded_file is not None and uploaded_file.name.lower().endswith('.pdf'):
+        if uploaded_file is not None and uploaded_file.name.lower().endswith(".pdf"):
             try:
                 from PyPDF2 import PdfReader
                 uploaded_file.seek(0)
@@ -936,8 +976,10 @@ def render_generation_sidebar():
         text_input = st.text_area("Or paste text content here", "", key="gen_text_input")
         url_input = st.text_input("Or provide a URL", "", key="gen_url_input")
 
-        if st.button("Generate Flashcards", key="gen_button", use_container_width=True):
+        # GENERATE button
+        if st.button("Generate", key="gen_button", use_container_width=True):
             final_text = ""
+
             if uploaded_file is not None:
                 if uploaded_file.name.lower().endswith('.pdf') and page_range is not None:
                     final_text = file_helper.process_file(uploaded_file, start_page=page_range[0], end_page=page_range[1])
@@ -950,105 +992,330 @@ def render_generation_sidebar():
 
             if not final_text:
                 st.warning("No valid content provided!")
+                return
+            
+            # run the pipelines
+            if "Flashcards" in study_types:
+                flashcard_models = file_helper.generate_flashcards_pipeline(final_text)
+                st.session_state.generated_cards = [
+                    fc
+                    for m in flashcard_models
+                    if hasattr(m, "flashcards")
+                    for fc in m.flashcards
+                ]
             else:
-                generated_models = file_helper.generate_flashcards_pipeline(final_text)
-                generated_cards = []
-                for model_instance in generated_models:
-                    if hasattr(model_instance, "flashcards"):
-                        generated_cards.extend(model_instance.flashcards)
-                st.session_state.generated_cards = generated_cards
-                if generated_cards:
-                    st.success(f"Generated {len(generated_cards)} flashcards!")
-                    # Switch to dedicated window – store current context first
-                    if not st.session_state.generated_view:
-                        st.session_state.pre_gen_state = {
-                            "selected_deck_id": st.session_state.get("selected_deck_id"),
-                            "selected_deck_mode": st.session_state.get("selected_deck_mode"),
-                            "selected_notebook_id": st.session_state.get("selected_notebook_id")
+                st.session_state.pop("generated_cards", None)
+
+            if "Notebooks" in study_types:
+                note_models = file_helper.generate_notes_pipeline(final_text)
+                st.session_state.generated_notes = [
+                    nt for m in note_models if hasattr(m, "notes") for nt in m.notes
+                ]
+            else:
+                st.session_state.pop("generated_notes", None)
+
+            # Mind Maps
+            graph_models: List[dict] = []
+            if "Mind Maps" in study_types:
+                graph_models.extend(
+                    [
+                        {
+                            "item": g,
+                            "type": "mind_map",
                         }
-                        st.session_state.generated_view = True
-                        st.rerun()
-                else:
-                    st.info("No flashcards were generated.")
+                        for g in file_helper.generate_graphs_pipeline(final_text, "mind_map")
+                    ]
+                )
 
+            if graph_models:
+                st.session_state.generated_graphs = graph_models
+            else:
+                st.session_state.pop("generated_graphs", None)
+
+            if not (
+                st.session_state.get("generated_cards")
+                or st.session_state.get("generated_notes")
+                or st.session_state.get("generated_graphs")
+            ):
+                st.info("Nothing was generated.")
+                return
+
+            # save previous UI context & open dedicated viewer
+            if not st.session_state.generated_view:
+                st.session_state.pre_gen_state = {
+                    "selected_deck_id": st.session_state.get("selected_deck_id"),
+                    "selected_deck_mode": st.session_state.get("selected_deck_mode"),
+                    "selected_notebook_id": st.session_state.get("selected_notebook_id"),
+                }
+                st.session_state.generated_view = True
+                st.rerun()
 
 # --------------------------------------------------------------
-#      Dedicated Window for Viewing Generated Flashcards
+#   Dedicated Window for Viewing Generated Items (cards & notes)
 # --------------------------------------------------------------
-
-def render_generated_cards_window():
-    """Full‑screen view for the cards produced by the sidebar generator."""
-    # Top row: Back button + title
+def render_generated_items_window():
     top_cols = st.columns([2, 8])
     if top_cols[0].button("Back", key="gen_back_btn", use_container_width=True):
-        # Restore context
-        if st.session_state.pre_gen_state is not None:
+        if st.session_state.pre_gen_state:
             for k, v in st.session_state.pre_gen_state.items():
                 st.session_state[k] = v
         st.session_state.generated_view = False
         st.session_state.pre_gen_state = None
         st.rerun()
 
-    top_cols[1].markdown("<h2 style='text-align:left;'>Generated Flashcards</h2>", unsafe_allow_html=True)
-
-    if not st.session_state.get("generated_cards"):
-        st.info("No generated flashcards to display.")
-        return
-
-    target_deck_id = st.session_state.get("gen_target_deck_id")
-    if target_deck_id is None:
-        st.error("Target deck not found. Please regenerate cards and select a deck first.")
-        return
-
+    top_cols[1].markdown("<h2 style='text-align:left;'>Generated Items</h2>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # Global Add/Delete buttons
-    all_cols = st.columns(2)
-    with all_cols[0]:
-        if st.button("Add All", use_container_width=True):
-            for card in st.session_state.generated_cards:
-                add_card(target_deck_id, card.front, card.back, extra_fields=None)
-            st.success("All generated flashcards have been imported to your deck!")
-            st.session_state.generated_cards = []
-            st.rerun()
-    with all_cols[1]:
-        if st.button("Delete All", use_container_width=True):
-            st.session_state.generated_cards = []
-            st.rerun()
+    # ----------  A.  FLASHCARDS  ----------
+    if st.session_state.get("generated_cards"):
+        st.markdown("<h2 style='text-align:center;'>Flashcards</h2>", unsafe_allow_html=True)
+        _render_generated_flashcards_section()
 
-    # Individual flashcard render loop
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
+
+    # ----------  B.  NOTES  ----------
+    if st.session_state.get("generated_notes"):
+        st.markdown("<h2 style='text-align:center;'>Notes</h2>", unsafe_allow_html=True)
+        _render_generated_notes_section()
+
+    if not (st.session_state.get("generated_cards") or st.session_state.get("generated_notes")):
+        st.info("No generated items to display.")
+
+# ================= helper: flashcards =========================
+
+def render_generated_items_window():
+    top_cols = st.columns([2, 8])
+    if top_cols[0].button("Back", key="gen_back_btn", use_container_width=True):
+        if st.session_state.pre_gen_state:
+            for k, v in st.session_state.pre_gen_state.items():
+                st.session_state[k] = v
+        st.session_state.generated_view = False
+        st.session_state.pre_gen_state = None
+        st.rerun()
+
+    top_cols[1].markdown("<h2 style='text-align:left;'>Generated Items</h2>", unsafe_allow_html=True)
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # FLASHCARDS
+    if st.session_state.get("generated_cards"):
+        st.markdown("<h2 style='text-align:center;'>Flashcards</h2>", unsafe_allow_html=True)
+        _render_generated_flashcards_section()
+
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
+
+    # NOTES
+    if st.session_state.get("generated_notes"):
+        st.markdown("<h2 style='text-align:center;'>Notes</h2>", unsafe_allow_html=True)
+        _render_generated_notes_section()
+
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
+
+    # GRAPHS
+    if st.session_state.get("generated_graphs"):
+        st.markdown("<h2 style='text-align:center;'>Graphs</h2>", unsafe_allow_html=True)
+        _render_generated_graphs_section()
+
+    if not (
+        st.session_state.get("generated_cards")
+        or st.session_state.get("generated_notes")
+        or st.session_state.get("generated_graphs")
+    ):
+        st.info("No generated items to display.")
+
+# ================= helper: flashcards =========================
+def _render_generated_flashcards_section():
+    target_ids = st.session_state.get("gen_target_deck_ids", [])
+    if not target_ids:
+        st.error("Target deck(s) not found – please re‑run generation.")
+        return
+
+    col_a, col_b = st.columns(2)
+    if col_a.button("Add All Flashcards", use_container_width=True):
+        for deck_id in target_ids:
+            for card in st.session_state.generated_cards:
+                add_card(deck_id, card.front, card.back, extra_fields=None)
+        st.success("Imported all flashcards!")
+        st.session_state.generated_cards = []
+        st.rerun()
+    if col_b.button("Delete All Flashcards", use_container_width=True):
+        st.session_state.generated_cards = []
+        st.rerun()
+
     for i, card in enumerate(st.session_state.generated_cards):
-        center_cols = st.columns([1, 6, 1])
-        with center_cols[1]:
-            with st.container(border=True):
-                st.markdown(
-                    f'<div style="text-align: left; font-size: 16px;"><strong>Flashcard {i+1}</strong></div>',
-                    unsafe_allow_html=True
-                )
-                st.text("")
-                st.markdown('<div style="text-align: center;"><h3>Front</h3></div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="text-align: center;">{card.front}</div>', unsafe_allow_html=True)
-                st.text("")
-                st.text("")
-                st.markdown('<div style="text-align: center;"><h3>Back</h3></div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="text-align: center;">{card.back}</div>', unsafe_allow_html=True)
-                st.divider()
-                btn_cols = st.columns(5)
-                with btn_cols[1]:
-                    if st.button("", key=f"gen_add_{i}", type="tertiary", icon=":material/add_circle:", use_container_width=True):
-                        add_card(target_deck_id, card.front, card.back, extra_fields=None)
-                        st.success(f"Added flashcard {i+1} to deck")
-                        st.session_state.generated_cards.pop(i)
-                        st.rerun()
-                with btn_cols[2]:
-                    if st.button("", key=f"gen_regen_{i}", type="tertiary", icon=":material/cached:", use_container_width=True):
-                        new_card = FileHelper().regenerate_flashcard(card)
-                        st.session_state.generated_cards[i] = new_card
-                        st.rerun()
-                with btn_cols[3]:
-                    if st.button("", key=f"gen_delete_{i}", type="tertiary", icon=":material/cancel:", use_container_width=True):
-                        st.session_state.generated_cards.pop(i)
-                        st.rerun()
+        _render_flashcard_container(card, i)
+
+def _render_flashcard_container(card, idx):
+    ccols = st.columns([1, 6, 1])
+    with ccols[1]:
+        with st.container(border=True):
+            st.markdown(
+                f'<div style="text-align: left; font-size: 16px;"><strong>Flashcard {idx+1}</strong></div>',
+                unsafe_allow_html=True
+            )
+            st.text("")
+
+            st.markdown('<div style="text-align: center;"><h3>Front</h3></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="text-align: center;">{card.front}</div>', unsafe_allow_html=True)
+
+            st.text("")
+            st.text("")
+
+            st.markdown('<div style="text-align: center;"><h3>Back</h3></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="text-align: center;">{card.back}</div>', unsafe_allow_html=True)
+
+            st.divider()
+
+            b1, b2, b3 = st.columns(3)
+            if b1.button("", key=f"add_fc_{idx}", type="tertiary", icon=":material/add_circle:", use_container_width=True):
+                for deck_id in st.session_state.get("gen_target_deck_ids", []):
+                    add_card(deck_id, card.front, card.back, extra_fields=None)
+                st.session_state.generated_cards.pop(idx)
+                st.rerun()
+            if b2.button("", key=f"regen_fc_{idx}", type="tertiary", icon=":material/cached:", use_container_width=True):
+                new_card = FileHelper().regenerate_flashcard(card)
+                st.session_state.generated_cards[idx] = new_card
+                st.rerun()
+            if b3.button("", key=f"del_fc_{idx}", type="tertiary", icon=":material/cancel:", use_container_width=True):
+                st.session_state.generated_cards.pop(idx)
+                st.rerun()
+
+# ================= helper: notes ==============================
+def _render_generated_notes_section():
+    nb_ids = st.session_state.get("gen_target_nb_ids", [])
+    if not nb_ids:
+        st.error("Target notebook(s) not found – please re‑run generation.")
+        return
+
+    col_a, col_b = st.columns(2)
+    if col_a.button("Add All Notes", use_container_width=True):
+        for nb_id in nb_ids:
+            for note in st.session_state.generated_notes:
+                create_note(nb_id, note.title, note.content)
+        st.success("Imported all notes!")
+        st.session_state.generated_notes = []
+        st.rerun()
+    if col_b.button("Delete All Notes", use_container_width=True):
+        st.session_state.generated_notes = []
+        st.rerun()
+
+    for i, note in enumerate(st.session_state.generated_notes):
+        _render_note_container(note, i)
+
+def _render_note_container(note, idx):
+    ccols = st.columns([1, 6, 1])
+    with ccols[1]:
+        with st.container(border=True):
+            st.markdown(
+                f"<div style='text-align: left; font-size: 16px;'><strong>Note {idx+1}</strong></div>",
+                unsafe_allow_html=True,
+            )
+            st.text("")
+            st.markdown(
+                f"<div style='text-align: center;'><h3><u>{note.title}</u></h3></div>",
+                unsafe_allow_html=True,
+            )
+            code = _extract_graphviz(note.content)
+            if code:
+                st.graphviz_chart(code, use_container_width=True)
+            else:
+                st.markdown(note.content, unsafe_allow_html=True)
+
+            st.divider()
+            b1, b2, b3 = st.columns(3)
+            # buttons unchanged except regen now works with note regeneration prompt
+            if b1.button("", key=f"add_nt_{idx}", type="tertiary", icon=":material/add_circle:", use_container_width=True):
+                for nb_id in st.session_state.get("gen_target_nb_ids", []):
+                    create_note(nb_id, note.title, note.content)
+                st.session_state.generated_notes.pop(idx)
+                st.rerun()
+            if b2.button("", key=f"regen_nt_{idx}", type="tertiary", icon=":material/cached:", use_container_width=True):
+                new_note = FileHelper().regenerate_note(note)
+                st.session_state.generated_notes[idx] = new_note
+                st.rerun()
+            if b3.button("", key=f"del_nt_{idx}", type="tertiary", icon=":material/cancel:", use_container_width=True):
+                st.session_state.generated_notes.pop(idx)
+                st.rerun()
+
+# ================= helper: graphs ===========================================
+
+def _extract_graphviz(content: str) -> str | None:
+    """Return DOT if content contains a graphviz code block **or** looks like raw DOT."""
+    m = re.search(r"```(?:graphviz|dot)\s+([\s\S]+?)```", content, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # fall‑back: raw DOT if it begins with graph keyword
+    stripped = content.strip()
+    if re.match(r"^(strict\s+)?(di)?graph\b", stripped, re.IGNORECASE):
+        return stripped
+    return None
+
+def _render_generated_graphs_section():
+    nb_ids = st.session_state.get("gen_target_nb_ids", [])
+    if not nb_ids:
+        st.error("Target notebook(s) not found – please re‑run generation.")
+        return
+
+    col_a, col_b = st.columns(2)
+    if col_a.button("Add All Graphs", use_container_width=True):
+        for nb_id in nb_ids:
+            for gdict in st.session_state.generated_graphs:
+                create_note(nb_id, gdict["item"].title, gdict["item"].content)
+        st.success("Imported all graphs!")
+        st.session_state.generated_graphs = []
+        st.rerun()
+    if col_b.button("Delete All Graphs", use_container_width=True):
+        st.session_state.generated_graphs = []
+        st.rerun()
+
+    for i, gdict in enumerate(st.session_state.generated_graphs):
+        _render_graph_container(gdict, i)
+
+def _render_graph_container(gdict: dict, idx: int):
+    graph_note = gdict["item"]
+    gtype = gdict["type"]
+    code = _extract_graphviz(graph_note.content)
+    ccols = st.columns([1, 6, 1])
+    with ccols[1]:
+        with st.container(border=True):
+            st.markdown(
+                f"<div style='text-align: left; font-size: 16px;'><strong>Graph {idx+1} ({gtype.replace('_', ' ').title()})</strong></div>",
+                unsafe_allow_html=True,
+            )
+            st.text("")
+            st.markdown(
+                f"<div style='text-align: center;'><h3><u>{graph_note.title}</u></h3></div>",
+                unsafe_allow_html=True,
+            )
+
+            if code:
+                st.graphviz_chart(code, use_container_width=True)
+            else:
+                st.error("GraphViz block not detected – displaying raw content:")
+                st.markdown(graph_note.content, unsafe_allow_html=True)
+
+            st.divider()
+            b1, b2, b3 = st.columns(3)
+            if b1.button("", key=f"add_gr_{idx}", type="tertiary", icon=":material/add_circle:", use_container_width=True):
+                for nb_id in st.session_state.get("gen_target_nb_ids", []):
+                    create_note(nb_id, graph_note.title, graph_note.content)
+                st.session_state.generated_graphs.pop(idx)
+                st.rerun()
+            if b2.button("", key=f"regen_gr_{idx}", type="tertiary", icon=":material/cached:", use_container_width=True):
+                new_graph = FileHelper().regenerate_graph(graph_note, graph_type=gtype)
+                st.session_state.generated_graphs[idx]["item"] = new_graph
+                st.rerun()
+            if b3.button("", key=f"del_gr_{idx}", type="tertiary", icon=":material/cancel:", use_container_width=True):
+                st.session_state.generated_graphs.pop(idx)
+                st.rerun()
 
 # --------------------------------------------------------------
 #                          Main App
@@ -1067,8 +1334,8 @@ def main():
 
     # --- Routing: dedicated generation view takes precedence ---
     if st.session_state.get("generated_view"):
-        render_generated_cards_window()
-        return  # Skip the rest of the dashboard while in generated‑view mode
+        render_generated_items_window()
+        return
 
     # --- Title ---
     st.markdown("<div style='text-align: center; font-size: 36px;'><strong>Study Dashboard</strong></div>", unsafe_allow_html=True)

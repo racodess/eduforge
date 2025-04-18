@@ -61,6 +61,60 @@ Ensure that the notes are focused, well-organized, and strictly adhere to the ma
 Generate enough notes to cover the source material comprehensively.
 """
 
+MIND_MAP_GENERATION_PROMPT = """
+**Task:**
+You are an AI assistant that converts academic source material into a
+*mind‑map* expressed in **GraphViz DOT** syntax.  Structure the map so the
+central idea sits at the centre with first‑level branches radiating
+outwards.  Sub‑branches should be connected hierarchically – do **not**
+create disconnected components.
+
+---
+**Output JSON Schema (NoteItem)**
+```json
+{
+    "title"   : "<concise title>",
+    "content" : "```graphviz\n<valid DOT here>\n```",
+    "data"    : "<verbatim excerpt(s) used>"
+}
+```
+
+*Only* return valid JSON – *no prose*.  The triple‑back‑tick wrapper is
+mandatory so the front‑end can autodetect the GraphViz block.
+"""
+
+KNOWLEDGE_GRAPH_GENERATION_PROMPT = """
+**Task:**
+From the provided source material derive an *entity / relation graph*
+using **GraphViz DOT** syntax.  Model entities as nodes and labelled
+relations as directed edges (use the `label` attribute).  Avoid duplicate
+edges.
+
+---
+**Output JSON Schema (NoteItem)** – identical to the mind‑map prompt
+above.
+"""
+
+REGENERATE_GRAPH_PROMPT = """
+**Task:**
+The user would like this graph regenerated (refined or re‑organised)
+*without* changing its overall information content.  Use the `context`
+provided to produce a new GraphViz DOT block.  Maintain the same graph
+type you are told (`mind_map` or `knowledge_graph`).
+
+Input (JSON):
+```json
+{
+    "original title"  : "...",
+    "original content": "```graphviz\n...\n```",
+    "context"         : "...",
+    "graph_type"      : "mind_map" | "knowledge_graph"
+}
+```
+
+Output must again conform to **NoteItem**.
+"""
+
 REGENERATE_FLASHCARD_PROMPT = """
 **Task:**
 You will **regenerate ONE flashcard** using only the `context` provided by the user, plus your own general knowledge.
@@ -70,18 +124,45 @@ The new front and back you create must be different than the one given in the us
 **Input (from user):**
 ```json
 {
-"original front": flashcard.front,
-"original back": flashcard.back,
-"context": flashcard.data or ""
+    "original front": flashcard.front,
+    "original back": flashcard.back,
+    "context": flashcard.data or ""
 }
 ```
 
 Output (JSON – must conform to FlashcardItem):
 ```json
 {
-  "front": "<new open‑ended question>",
-  "back": "<concise answer>",
-  "data": "<same context string, unchanged>"
+    "front": "<new open‑ended question>",
+    "back": "<concise answer>",
+    "data": "<same context string, unchanged>"
+}
+```
+
+Follow all flashcard formatting rules exactly.
+"""
+
+REGENERATE_NOTE_PROMPT = """
+**Task:**
+You will **regenerate ONE set of notes** using only the `context` provided by the user, plus your own general knowledge.
+The original full document is *not* available to you.
+The new notes you create must be different than the one given in the user's context.
+
+**Input (from user):**
+```json
+{
+    "original title": note.title,
+    "original content": note.content,
+    "context": note.data or ""
+}
+```
+
+Output (JSON – must conform to FlashcardItem):
+```json
+{
+    "title": "<new title for this set of notes>",
+    "content": "<high-quality **study notes** from given context. Your goal is to form key points, bullet point summaries, and detailed explanations of concepts to aid studying. Each note should be self-contained, clearly formatted in markdown, and organized into sections if necessary>",
+    "data": "<same context string, unchanged>"
 }
 ```
 
