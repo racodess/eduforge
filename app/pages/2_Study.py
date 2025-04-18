@@ -8,7 +8,7 @@ import streamlit as st
 from utils.flashcards_db import (
     init_db as init_flashcards_db,
     update_db_schema,
-    get_decks, create_deck, trash_deck, reset_deck, get_deck_stats,
+    get_decks, create_deck, rename_deck, trash_deck, reset_deck, get_deck_stats,
     get_cards, get_card_by_id, delete_card, update_card, add_card
 )
 from utils.notes_db import (
@@ -327,176 +327,315 @@ def delete_tab_dialog(notebook_id: int):
             st.session_state.tab_to_delete = None
             st.rerun()
 
-
 # --------------------------------------------------------------
 #                   Flashcard Decks Section
 # --------------------------------------------------------------
-def render_decks_section():
+def render_decks_section() -> None:
     """
-    Renders the top-level table of flashcard decks.
-    Adds "Create Deck" and "Import Deck" buttons (each open a dialog).
+    Deck list is shown in an editable Streamlit data_editor.
+
+    • Add a new deck:  simply add a row and type a name.
+    • Rename a deck   :  edit the Deck cell and press ⏎.
+    • Select a deck   :  tick the Select box, then use the buttons underneath.
     """
+    import pandas as pd
+
     st.markdown("## Flashcard Decks")
 
-    decks = get_decks()
-    if decks:
-        # Table header
-        header_cols = st.columns([2, 1, 1, 1, 6])
-        header_cols[0].markdown("**Deck**")
-        header_cols[1].markdown("**New**")
-        header_cols[2].markdown("**Learn**")
-        header_cols[3].markdown("**Due**")
-
-        for deck_id, deck_name in decks:
-            stats = get_deck_stats(deck_id)
-            row_cols = st.columns([2, 1, 1, 1, 6])
-            row_cols[0].write(deck_name)
-            row_cols[1].write(stats["new"])
-            row_cols[2].write(stats["learn"])
-            row_cols[3].write(stats["due"])
-
-            # Actions
-            with row_cols[4]:
-                action_cols = st.columns(4)
-                if action_cols[0].button("Review", key=f"review_deck_{deck_id}", use_container_width=True):
-                    st.session_state.selected_deck_id = deck_id
-                    st.session_state.selected_deck_mode = "review"
-                    st.session_state.review_card_id = None
-                    st.session_state.review_show_answer = False
-                    st.session_state.review_edit_mode = False
-                    st.rerun()
-
-                if action_cols[1].button("Browse", key=f"browse_deck_{deck_id}", use_container_width=True):
-                    st.session_state.selected_deck_id = deck_id
-                    st.session_state.selected_deck_mode = "browse"
-                    st.rerun()
-
-                # Export
-                cards_data = get_cards(deck_id)
-                deck_data = {
-                    "name": deck_name,
-                    "cards": [{"front": c[1], "back": c[2]} for c in cards_data]
+    # -------- Build the dataframe shown in the editor --------
+    decks_raw = get_decks()                 # [(id, name), …]
+    if decks_raw:
+        df_orig = pd.DataFrame(
+            [
+                {
+                    "id": d_id,
+                    "Select": False,
+                    "Deck": d_name,
+                    **get_deck_stats(d_id)   # ⇒ {"new":…, "learn":…, "due":…}
                 }
-                deck_json = json.dumps(deck_data, indent=2)
-                action_cols[2].download_button(
-                    "Export",
-                    deck_json,
-                    file_name=f"{deck_name}.json",
-                    mime="application/json",
-                    key=f"export_deck_{deck_id}",
-                    use_container_width=True
-                )
-
-                if action_cols[3].button("Delete", key=f"delete_deck_{deck_id}", use_container_width=True):
-                    st.session_state.deck_pending_delete = deck_id
-                    st.rerun()
-
-            # Confirm deck deletion
-            if st.session_state.deck_pending_delete == deck_id:
-                st.info(f"Are you sure you want to delete the deck '{deck_name}'?")
-                confirm_cols = st.columns(2)
-                if confirm_cols[0].button("Yes", key=f"confirm_delete_yes_{deck_id}", use_container_width=True):
-                    trash_deck(deck_id)
-                    st.success(f"Deck '{deck_name}' deleted!")
-                    st.session_state.deck_pending_delete = None
-                    st.rerun()
-                if confirm_cols[1].button("No", key=f"confirm_delete_no_{deck_id}", use_container_width=True):
-                    st.session_state.deck_pending_delete = None
-                    st.rerun()
+                for d_id, d_name in decks_raw
+            ]
+        )
     else:
-        st.info("No flashcard decks found.")
+        # Empty template so the user can create the first deck
+        df_orig = pd.DataFrame(
+            columns=["id", "Select", "Deck", "new", "learn", "due"]
+        )
 
-    # "Create Deck" and "Import Deck" buttons side-by-side
-    c1, c2 = st.columns([1,1])
-    with c1:
-        if st.button("Create Deck", key="create_deck_top_btn"):
-            create_deck_dialog()
+    # Disable stats + id in the editor
+    col_cfg = {
+        "id": st.column_config.TextColumn(disabled=True),
+        "new": st.column_config.NumberColumn("New", disabled=True),
+        "learn": st.column_config.NumberColumn("Learn", disabled=True),
+        "due": st.column_config.NumberColumn("Due", disabled=True),
+        "Select": st.column_config.CheckboxColumn("Select")
+    }
 
-    with c2:
-        if st.button("Import Deck", key="import_deck_top_btn"):
-            import_deck_dialog()
+    edited_df = st.data_editor(
+        df_orig,
+        column_config=col_cfg,
+        num_rows="dynamic",          # allows adding rows
+        hide_index=True,
+        use_container_width=True,
+        key="decks_editor"
+    )
+
+    # -------- Persist data‑editor changes --------
+    # 1) New rows  → create_deck
+    new_rows = edited_df[edited_df["id"].isna() & edited_df["Deck"].notna()]
+
+    created_any = False
+
+    existing_names = {n.lower() for _, n in decks_raw}
+    for _, row in new_rows.iterrows():
+        new_name = row["Deck"].strip()
+        if not new_name:
+            continue
+        if new_name.lower() in existing_names:
+            st.error(f"Deck name '{new_name}' already exists.")
+            continue
+        create_deck(new_name)
+        created_any = True
+        existing_names.add(new_name.lower())        # keep set up‑to‑date
+
+    # 2) Renamed rows → rename_deck
+    renamed = (
+        edited_df[edited_df["id"].notna()]
+        .merge(df_orig[["id", "Deck"]], on="id", suffixes=("_new", "_old"))
+    )
+    for _, r in renamed.iterrows():
+        old = r["Deck_old"].strip()
+        new = r["Deck_new"].strip()
+        if new == old:
+            continue
+        if new.lower() in existing_names:
+            st.error(f"Deck name '{new}' already exists.")
+            continue
+        rename_deck(int(r["id"]), new)
+        existing_names.discard(old.lower())
+        existing_names.add(new.lower())
+
+    if created_any: # refresh so stats columns appear
+        st.rerun()
+
+    # 3) Fetch the selection (use the first True tick if several)
+    sel_rows = edited_df[edited_df["Select"].fillna(False)]
+    sel_deck_id = int(sel_rows.iloc[0]["id"]) if not sel_rows.empty else None
+    sel_deck_name = sel_rows.iloc[0]["Deck"] if not sel_rows.empty else None
+
+    # -------- Action buttons --------
+    btn_cols = st.columns(4)
+    with btn_cols[0]:
+        if st.button("Review", key="deck_review_btn", disabled=sel_deck_id is None):
+            st.session_state.update(
+                selected_deck_id=sel_deck_id,
+                selected_deck_mode="review",
+                review_card_id=None,
+                review_show_answer=False,
+                review_edit_mode=False,
+            )
+            st.rerun()
+
+    with btn_cols[1]:
+        if st.button("Browse", key="deck_browse_btn", disabled=sel_deck_id is None):
+            st.session_state.selected_deck_id = sel_deck_id
+            st.session_state.selected_deck_mode = "browse"
+            st.rerun()
+
+    with btn_cols[2]:
+        if sel_deck_id is not None:          # a deck is selected → real download button
+            cards_data = get_cards(sel_deck_id)
+            deck_json = json.dumps(
+                {
+                    "name": sel_deck_name,
+                    "cards": [{"front": c[1], "back": c[2]} for c in cards_data],
+                },
+                indent=2,
+            )
+            st.download_button(
+                label="Export",                         # <- single, immediate‑download button
+                data=deck_json,
+                file_name=f"{sel_deck_name}.json",
+                mime="application/json",
+                key=f"download_deck_{sel_deck_id}",
+            )
+        else:                                # nothing selected → disabled placeholder
+            st.button("Export", disabled=True, key="deck_export_btn_disabled")
+
+    with btn_cols[3]:
+        if st.button("Delete", key="deck_delete_btn", disabled=sel_deck_id is None):
+            st.session_state.deck_pending_delete = sel_deck_id
+            st.rerun()
+
+    # -------- Deletion confirmation --------
+    pending_deck_id = st.session_state.get("deck_pending_delete")
+    if pending_deck_id is not None and pending_deck_id == sel_deck_id:
+        st.info(f"Delete deck **{sel_deck_name}**?")
+        c_yes, c_no = st.columns(2)
+        if c_yes.button("Yes – delete it", key="deck_delete_btn_yes"):
+            trash_deck(sel_deck_id)
+            st.session_state.deck_pending_delete = None
+            st.success("Deleted ✅")
+            st.rerun()
+        if c_no.button("No – keep it", key="deck_delete_btn_no"):
+            st.session_state.deck_pending_delete = None
+            st.rerun()
+
+    # -------- Import Deck button (create is now via the table) --------
+    if st.button("Import Deck"):
+        import_deck_dialog()
 
 
 # --------------------------------------------------------------
 #                   Notebooks Section
 # --------------------------------------------------------------
-def render_notebooks_section():
+def render_notebooks_section() -> None:
     """
-    Displays all notebooks in a table, plus "Create Notebook" and "Import Notebook" buttons.
+    Notebook list in a Streamlit data_editor.
     """
+    import pandas as pd
+
     st.markdown("## Notebooks")
 
-    notebooks = get_notebooks()
-    if notebooks:
-        header_cols = st.columns([2, 1, 1, 1, 6])
-        header_cols[0].markdown("**Notebook**")
-        header_cols[1].markdown("**New**")
-        header_cols[2].markdown("**Learn**")
-        header_cols[3].markdown("**Due**")
-
-        for nb_id, nb_name in notebooks:
-            row_cols = st.columns([2, 1, 1, 1, 6])
-            row_cols[0].write(nb_name)
-            row_cols[1].write("0")  # placeholder
-            row_cols[2].write("0")
-            row_cols[3].write("0")
-
-            with row_cols[4]:
-                action_cols = st.columns(4)
-                if action_cols[0].button("Review", key=f"review_nb_{nb_id}", use_container_width=True):
-                    st.warning("Notebook Review not implemented yet.")
-
-                if action_cols[1].button("Browse", key=f"browse_nb_{nb_id}", use_container_width=True):
-                    st.session_state.selected_notebook_id = nb_id
-                    st.rerun()
-
-                # Export
-                notes_data = get_notes(nb_id)
-                nb_data = {
-                    "name": nb_name,
-                    "notes": [
-                        {"tab_name": n[1], "content": n[2]}
-                        for n in notes_data
-                    ]
+    notebooks_raw = get_notebooks()             # [(id, name), …]
+    if notebooks_raw:
+        df_orig = pd.DataFrame(
+            [
+                {
+                    "id": nb_id,
+                    "Select": False,
+                    "Notebook": nb_name,
+                    "new": 0,
+                    "learn": 0,
+                    "due": 0,
                 }
-                nb_json = json.dumps(nb_data, indent=2)
-                action_cols[2].download_button(
-                    "Export",
-                    nb_json,
-                    file_name=f"{nb_name}.json",
-                    mime="application/json",
-                    key=f"export_nb_{nb_id}",
-                    use_container_width=True
-                )
-
-                if action_cols[3].button("Delete", key=f"delete_nb_{nb_id}", use_container_width=True):
-                    st.session_state.notebook_pending_delete = nb_id
-                    st.rerun()
-
-            # Confirm notebook deletion
-            if st.session_state.notebook_pending_delete == nb_id:
-                st.info(f"Are you sure you want to delete notebook '{nb_name}'?")
-                confirm_cols = st.columns(2)
-                if confirm_cols[0].button("Yes", key=f"confirm_nb_delete_yes_{nb_id}", use_container_width=True):
-                    delete_notebook(nb_id)
-                    st.success(f"Notebook '{nb_name}' deleted!")
-                    st.session_state.notebook_pending_delete = None
-                    st.rerun()
-                if confirm_cols[1].button("No", key=f"confirm_nb_delete_no_{nb_id}", use_container_width=True):
-                    st.session_state.notebook_pending_delete = None
-                    st.rerun()
+                for nb_id, nb_name in notebooks_raw
+            ]
+        )
     else:
-        st.info("No notebooks found.")
+        df_orig = pd.DataFrame(
+            columns=["id", "Select", "Notebook", "new", "learn", "due"]
+        )
 
-    # "Create Notebook" and "Import Notebook" buttons side-by-side
-    c1, c2 = st.columns([1,1])
-    with c1:
-        if st.button("Create Notebook", key="create_notebook_top_btn"):
-            create_notebook_dialog()
-    with c2:
-        if st.button("Import Notebook", key="import_notebook_top_btn"):
-            import_notebook_dialog()
+    col_cfg = {
+        "id": st.column_config.TextColumn(disabled=True),
+        "new": st.column_config.NumberColumn("New", disabled=True),
+        "learn": st.column_config.NumberColumn("Learn", disabled=True),
+        "due": st.column_config.NumberColumn("Due", disabled=True),
+        "Select": st.column_config.CheckboxColumn("Select"),
+    }
 
+    edited_df = st.data_editor(
+        df_orig,
+        column_config=col_cfg,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        key="notebooks_editor",
+    )
+
+    # Persist adds / renames
+    new_rows = edited_df[edited_df["id"].isna() & edited_df["Notebook"].notna()]
+
+    created_any = False
+
+    existing_names = {n.lower() for _, n in notebooks_raw}
+    for _, row in new_rows.iterrows():
+        new_name = row["Notebook"].strip()
+        if not new_name:
+            continue
+        if new_name.lower() in existing_names:
+            st.error(f"Notebook name '{new_name}' already exists.")
+            continue
+        create_notebook(new_name)
+        created_any = True
+        existing_names.add(new_name.lower())
+
+    renamed = (
+        edited_df[edited_df["id"].notna()]
+        .merge(df_orig[["id", "Notebook"]], on="id", suffixes=("_new", "_old"))
+    )
+    for _, r in renamed.iterrows():
+        old = r["Notebook_old"].strip()
+        new = r["Notebook_new"].strip()
+        if new == old:
+            continue
+        if new.lower() in existing_names:
+            st.error(f"Notebook name '{new}' already exists.")
+            continue
+        rename_notebook(int(r["id"]), new)
+        existing_names.discard(old.lower())
+        existing_names.add(new.lower())
+
+    if created_any:                           # refresh the table
+        st.rerun()
+
+    sel_rows = edited_df[edited_df["Select"].fillna(False)]
+    sel_nb_id = int(sel_rows.iloc[0]["id"]) if not sel_rows.empty else None
+    sel_nb_name = sel_rows.iloc[0]["Notebook"] if not sel_rows.empty else None
+
+    btn_cols = st.columns(4)
+    with btn_cols[0]:
+        if st.button("Review", key="nb_review_btn", disabled=True):
+            st.warning("Notebook‑review mode not implemented yet.")
+
+    with btn_cols[1]:
+        if st.button("Browse", key="nb_browse_btn", disabled=sel_nb_id is None):
+            st.session_state.selected_notebook_id = sel_nb_id
+            st.rerun()
+
+    with btn_cols[2]:
+        if sel_nb_id is not None:
+            notes_data = get_notes(sel_nb_id)
+            nb_json = json.dumps(
+                {
+                    "name": sel_nb_name,
+                    "notes": [
+                        {"tab_name": n[1], "content": n[2]} for n in notes_data
+                    ],
+                },
+                indent=2,
+            )
+            st.download_button(
+                label="Export",
+                data=nb_json,
+                file_name=f"{sel_nb_name}.json",
+                mime="application/json",
+                key=f"download_nb_{sel_nb_id}",
+            )
+        else:
+            st.button("Export", disabled=True, key="nb_export_btn_disabled")
+
+    with btn_cols[3]:
+        if st.button("Delete", key="nb_delete_btn", disabled=sel_nb_id is None):
+            st.session_state.notebook_pending_delete = sel_nb_id
+            st.rerun()
+
+    pending_nb_id = st.session_state.get("notebook_pending_delete")
+    if pending_nb_id is not None and pending_nb_id == sel_nb_id:
+        st.info(f"Delete notebook **{sel_nb_name}**?")
+        c_yes, c_no = st.columns(2)
+        if c_yes.button("Yes – delete it", key="nb_delete_btn_yes"):
+            delete_notebook(sel_nb_id)
+            st.session_state.notebook_pending_delete = None
+            st.success("Deleted ✅")
+            st.rerun()
+        if c_no.button("No – keep it", key="nb_delete_btn_no"):
+            st.session_state.notebook_pending_delete = None
+            st.rerun()
+
+    if st.button("Import Notebook"):
+        import_notebook_dialog()
+
+def _clear_new_row(df_key: str, row_idx):
+    """
+    Blank the Deck field and uncheck Select for the row at row_idx
+    in st.session_state[df_key] (where df_key is 'decks_editor' or 'notebooks_editor').
+    """
+    ss_df = st.session_state[df_key]
+    ss_df.at[row_idx, "Deck"] = ""
+    if "Select" in ss_df.columns:
+        ss_df.at[row_idx, "Select"] = False
 
 # --------------------------------------------------------------
 #         Notebook Detail (Browse Selected Notebook)
