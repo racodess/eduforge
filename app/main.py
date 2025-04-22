@@ -2,13 +2,13 @@
 
 import streamlit as st
 
-from eduforge.app.flashcards import render_deck_detail, render_deck_review, render_decks_section
+from flashcards import render_deck_detail, render_deck_review, render_decks_section
 from generated_items import render_generated_items_window
 from notebooks import render_notebook_detail, render_notebook_review, render_notebooks_section
 from sidebar import render_generation_sidebar
 from utils.flashcards_db import init_db as init_flashcards_db, update_db_schema
 from utils.notes_db import init_db as init_notes_db
-from eduforge.app.quiz import render_quiz_section
+from quiz import render_quiz_section
 
 def init_session_state():
     """Initialize session variables for flashcards, notebooks, tools, and generation view."""
