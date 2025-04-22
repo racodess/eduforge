@@ -1,1 +1,1 @@
-streamlit run %cd%\app\0_Dashboard.py
+streamlit run %cd%\app\main.py
