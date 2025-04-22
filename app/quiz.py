@@ -1,7 +1,10 @@
-"""Quiz Section – AI‑generated MCQ component
---------------------------------------------------
-Drop‑in module for EduForge Study Dashboard.
-Call `render_quiz_section()` wherever you want the quiz to appear.
+# quiz.py
+
+"""
+Implements a multiple-choice quiz interface using Streamlit and OpenAI API.
+Provides helper functions for state management and JSON parsing,
+and renders a quiz section with question generation, difficulty selection,
+and answer evaluation.
 """
 
 from __future__ import annotations
@@ -15,61 +18,82 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 
+# Load environment variables from a .env file, including OPENAI_API_KEY
 load_dotenv()
+
+# Alias for Streamlit session state for convenience
 state = st.session_state  # quick alias
 
-# ════════════════════════════════════════════════════════════════════════
-# Helper callbacks and utils
-# ════════════════════════════════════════════════════════════════════════
+"""
+Helper callbacks and utility functions
+"""
 
 def _reset_counters() -> None:
-    """Reset correct / incorrect counters and clear last result."""
+    """
+    Reset the quiz result counters and clear the last result message.
+    """
+    # Reset correct and incorrect counters to zero
     state.correct_counter = state.incorrect_counter = 0
+
+    # Clear result and answer message
     state.result = state.answer_message = ""
 
 
 def _mark_correct() -> None:
-    state.result, state.answer_message = "correct", "✅ Correct!"
+    """
+    Mark the current answer as correct: update state and increment counter.
+    """
+    state.result = "correct"
+    state.answer_message = "✅ Correct!"
+
+    # Safely get current correct count or default to 0, then increment
     state.correct_counter = state.get("correct_counter", 0) + 1
 
 
 def _mark_incorrect() -> None:
-    state.result, state.answer_message = "incorrect", "❌ Incorrect!"
+    """
+    Mark the current answer as incorrect: update state and increment counter.
+    """
+    state.result = "incorrect"
+    state.answer_message = "❌ Incorrect!"
+    # Safely get current incorrect count or default to 0, then increment
     state.incorrect_counter = state.get("incorrect_counter", 0) + 1
 
-
-# robust JSON extractor ── handles ```json blocks, stray prose, single quotes
+# Regular expression to extract JSON content from text, handling fenced blocks
 _JSON_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)\s*```", re.I)
 
 def _safe_json(text: str) -> dict | None:
-    """Attempt to coerce *any* assistant reply into a JSON dict.
-
-    Returns None if we still can't parse."""
-    # prefer fenced block
+    """
+    Attempt to extract and parse JSON from a text response.
+    Handles fenced JSON blocks, stray prose, and single quotes.
+    Returns a dict if successful, otherwise None.
+    """
+    # Search for a fenced JSON block first
     m = _JSON_RE.search(text)
     if m:
         text = m.group(1)
 
-    # substring from first "{" to last "}"
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 < end:
-        text = text[start : end + 1]
+    # Fallback: take substring from first '{' to last '}'
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        text = text[start:end+1]
 
+    # Replace single quotes and attempt JSON parse
     try:
         return json.loads(text.replace("'", '"'))
     except json.JSONDecodeError:
         return None
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Main renderer
-# ════════════════════════════════════════════════════════════════════════
-
+# Main quiz UI renderer
 def render_quiz_section() -> None:
-    """Render the quiz UI inside the current Streamlit page."""
-
-    # ── ensure all session keys exist ────────────────────────────────
-    for k, v in [
+    """
+    Render the quiz user interface in the current Streamlit page.
+    Includes API key input, topic and difficulty selection,
+    question generation, display, and answer evaluation.
+    """
+    # Ensure all expected session state keys are initialized
+    for key, default in [
         ("correct_counter", 0),
         ("incorrect_counter", 0),
         ("quiz_api_key", os.getenv("OPENAI_API_KEY", "")),
@@ -79,9 +103,9 @@ def render_quiz_section() -> None:
         ("conversation", []),
         ("show_question", False),
     ]:
-        state.setdefault(k, v)
+        state.setdefault(key, default)
 
-    # sample formats we instruct the model with (for prompt only)
+    # Sample JSON formats for instructing the model
     bare_fmt = {
         "title": "What is the capital of France?",
         "choices": ["Berlin", "Madrid", "Paris", "Rome"],
@@ -94,46 +118,49 @@ def render_quiz_section() -> None:
         "answer": 1,
     }
 
-    # ── UI container ────────────────────────────────────────────────
+    # Container for the quiz section UI
     with st.container(border=True):
+        # Section header
         st.markdown(
-            "<h2 style='text-align:center;'>Quiz&nbsp;📝</h2>",
+            "<h2 style='text-align:center;'>Quiz 📝</h2>",
             unsafe_allow_html=True,
         )
 
-        # API key prompt if env var missing
+        # Prompt for OpenAI API key if not already set
         if not state.quiz_api_key:
-            key_in = st.text_input("OpenAI API key", type="password")
-            if key_in:
-                state.quiz_api_key = key_in
+            key_input = st.text_input("OpenAI API key", type="password")
+            if key_input:
+                state.quiz_api_key = key_input
 
-        # topic input & generate button
+        # Topic input field and generate button
         st.markdown(
             "<p style='text-align:center;'>What would you like to be quizzed on?</p>",
             unsafe_allow_html=True,
         )
-        t1, t2 = st.columns([5, 2])
-        topic = t1.text_input(
+        topic_col, button_col = st.columns([5, 2])
+        topic = topic_col.text_input(
             "quiz_topic",
             label_visibility="collapsed",
             placeholder="Data Structures",
         )
-        gen_clicked = t2.button("Generate ⚡", use_container_width=True)
+        generate_clicked = button_col.button("Generate ⚡", use_container_width=True)
 
         st.divider()
 
-        # difficulty selector
+        # Difficulty selection buttons
         st.markdown(
             "<p style='text-align:center;'>Select a difficulty level</p>",
             unsafe_allow_html=True,
         )
-        d1, d2, d3 = st.columns(3)
-        if d1.button("Beginner", use_container_width=True):
+        beg_col, int_col, exp_col = st.columns(3)
+        if beg_col.button("Beginner", use_container_width=True):
             state.difficulty, state.difficulty_selected = "Beginner", True
-        if d2.button("Intermediate", use_container_width=True):
+        if int_col.button("Intermediate", use_container_width=True):
             state.difficulty, state.difficulty_selected = "Intermediate", True
-        if d3.button("Expert", use_container_width=True):
+        if exp_col.button("Expert", use_container_width=True):
             state.difficulty, state.difficulty_selected = "Expert", True
+
+        # Display current difficulty
         st.markdown(
             f"<p style='text-align:right;'><em>Selected: {state.difficulty}</em></p>",
             unsafe_allow_html=True,
@@ -141,79 +168,96 @@ def render_quiz_section() -> None:
 
         st.divider()
 
-        # ── question generation ────────────────────────────────────
-        if gen_clicked:
+        # Handle question generation when button is clicked
+        if generate_clicked:
+            # Validate inputs
             if not topic:
-                st.warning("Please type a topic first."); st.stop()
+                st.warning("Please type a topic first.")
+                st.stop()
             if not state.difficulty_selected:
-                st.warning("Pick a difficulty."); st.stop()
+                st.warning("Pick a difficulty.")
+                st.stop()
             if not state.quiz_api_key:
-                st.warning("Enter your OpenAI API key."); st.stop()
+                st.warning("Enter your OpenAI API key.")
+                st.stop()
 
+            # Initialize OpenAI client and prepare prompt
             client = OpenAI(api_key=state.quiz_api_key)
             prompt = (
                 f"Generate ONE {state.difficulty} multiple‑choice question about {topic}. "
                 f"Return ONLY JSON like {bare_fmt}. If code is needed use the 'code' field like {code_fmt}."
             )
             state.conversation = [{"role": "user", "content": prompt}]
-            raw = client.chat.completions.create(
+
+            # Request a completion from the model
+            raw_response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=state.conversation,
                 temperature=0.7,
             ).choices[0].message.content
 
-            parsed = _safe_json(raw)
-            if parsed is None:
-                st.error("Model returned malformed JSON:\n\n" + raw)
+            # Parse the JSON response safely
+            parsed_question = _safe_json(raw_response)
+            if parsed_question is None:
+                st.error("Model returned malformed JSON:\n\n" + raw_response)
                 st.stop()
 
-            state.question = parsed
+            # Update state with the new question and prepare to display it
+            state.question = parsed_question
             state.show_question = True
-            state.result = ""  # clear previous result
+            state.result = "" # Clear any previous result feedback
 
-        # ── show question ──────────────────────────────────────────
+        # Display the question and choices if available
         if state.show_question and state.question:
             q = state.question
             try:
-                ans_index = int(q.get("answer", 0))
+                answer_index = int(q.get("answer", 0))
             except (TypeError, ValueError):
-                ans_index = 0
+                answer_index = 0
 
+            # Show question title
             st.markdown(
                 f"<h3 style='text-align:center;'>{q['title']}</h3>",
                 unsafe_allow_html=True,
             )
+
+            # Show code block if question includes code
             if "code" in q:
                 st.code(q["code"], language="python")
 
-            c_left, c_right = st.columns(2)
-            for idx, choice_txt in enumerate(q["choices"]):
-                col = c_left if idx % 2 == 0 else c_right
-                callback = _mark_correct if idx == ans_index else _mark_incorrect
-                col.button(
-                    choice_txt,
+            # Arrange choice buttons in two columns
+            col_left, col_right = st.columns(2)
+            for idx, choice_text in enumerate(q["choices"]):
+                current_col = col_left if idx % 2 == 0 else col_right
+
+                # Assign correct or incorrect callback based on answer index
+                click_callback = _mark_correct if idx == answer_index else _mark_incorrect
+                current_col.button(
+                    choice_text,
                     key=f"ch_{idx}_{uuid4().hex[:6]}",
-                    on_click=callback,
+                    on_click=click_callback,
                     use_container_width=True,
                 )
 
-            # feedback message
+            # Provide feedback message based on user's answer
             if state.result == "correct":
                 st.success(state.answer_message)
             elif state.result == "incorrect":
                 st.error(state.answer_message)
 
-            # counters row
-            st.text("")
-            m1, m2 = st.columns(2)
-            m1.metric("Correct", state.correct_counter)
-            m2.metric("Incorrect", state.incorrect_counter)
+            # Display counters for correct/incorrect answers
+            st.text("")  # Spacer
+            metric_col1, metric_col2 = st.columns(2)
+            metric_col1.metric("Correct", state.correct_counter)
+            metric_col2.metric("Incorrect", state.incorrect_counter)
 
-            # actions row inside its own container
+            # Action buttons: reset counters or generate similar question
             with st.container():
-                a1, a2 = st.columns(2)
-                a1.button("Reset counters", on_click=_reset_counters, use_container_width=True)
-                if a2.button("Generate similar", use_container_width=True):
+                reset_col, similar_col = st.columns(2)
+                reset_col.button("Reset counters", on_click=_reset_counters, use_container_width=True)
+
+                if similar_col.button("Generate similar", use_container_width=True):
+                    # Clear previous result and append follow-up prompt
                     state.result = ""
                     state.conversation.append({
                         "role": "user",
@@ -222,14 +266,17 @@ def render_quiz_section() -> None:
                             "Same JSON format."
                         ),
                     })
-                    raw2 = OpenAI(api_key=state.quiz_api_key).chat.completions.create(
+                    # Call OpenAI to get a new question
+                    new_raw = OpenAI(api_key=state.quiz_api_key).chat.completions.create(
                         model="gpt-4o-mini",
                         messages=state.conversation,
                         temperature=0.7,
                     ).choices[0].message.content
-                    new_q = _safe_json(raw2)
-                    if new_q is None:
-                        st.error("Model returned malformed JSON:\n\n" + raw2)
+
+                    # Parse and handle new question response
+                    new_question = _safe_json(new_raw)
+                    if new_question is None:
+                        st.error("Model returned malformed JSON:\n\n" + new_raw)
                     else:
-                        state.question = new_q
+                        state.question = new_question
                         st.rerun()

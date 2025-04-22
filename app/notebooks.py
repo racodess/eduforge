@@ -1,3 +1,11 @@
+# notebooks.py
+
+"""
+Provides notebook and note management UIs for the EduForge study platform.
+Includes listing, creating, renaming, deleting notebooks and tabs,
+detailed note editing, preview, and spaced-repetition review workflows.
+"""
+
 import json
 import streamlit as st
 
@@ -10,6 +18,7 @@ from utils.notes_db import (
 from utils.flashcards_sm2 import format_interval_short
 from utils.notes_sm2 import update_sm2 as update_sm2_note, project_interval as project_interval_note
 
+# Default content for a new notebook tab when none exist
 DEFAULT_TAB_CONTENT = """\
 # Welcome to Your Notebook!
 
@@ -24,33 +33,36 @@ This is your *default* tab. Each notebook must always have at least one tab.
 All tabs support **GitHub-Flavored Markdown** (headings, bold, italics, bullet lists, etc.). 
 """
 
+
 def render_notebooks_section() -> None:
     """
-    Notebook list in a Streamlit data_editor.
+    Display a table of all notebooks with stats, allow creating/renaming/deleting,
+    and provide action buttons for review, browse, import, export, and delete.
     """
     import pandas as pd
     from dialogs import import_notebook_dialog
 
+    # Section header
     st.markdown("<h2 style='text-align:center;'>Notebooks</h2>", unsafe_allow_html=True)
 
-    notebooks_raw = get_notebooks()            # [(id, name), …]
+    # Fetch existing notebooks
+    notebooks_raw = get_notebooks()
     if notebooks_raw:
-        df_orig = pd.DataFrame(
-            [
-                {
-                    "id": nb_id,
-                    "Select": False,
-                    "Notebook": nb_name,
-                    **get_notebook_stats(nb_id)              # ← live New / Due figures
-                }
-                for nb_id, nb_name in notebooks_raw
-            ]
-        )
+        # Build DataFrame with id, name, selection checkbox, and stats
+        df_orig = pd.DataFrame([
+            {
+                "id": nb_id,
+                "Select": False,
+                "Notebook": nb_name,
+                **get_notebook_stats(nb_id)  # live new/learn/due counts
+            }
+            for nb_id, nb_name in notebooks_raw
+        ])
     else:
-        df_orig = pd.DataFrame(
-            columns=["id", "Select", "Notebook", "new", "learn", "due"]
-        )
+        # Empty frame with expected columns if no notebooks
+        df_orig = pd.DataFrame(columns=["id", "Select", "Notebook", "new", "learn", "due"])
 
+    # Configure how each column should render in data_editor
     col_cfg = {
         "id": st.column_config.TextColumn(disabled=True),
         "new": st.column_config.NumberColumn("New", disabled=True),
@@ -59,6 +71,7 @@ def render_notebooks_section() -> None:
         "Select": st.column_config.CheckboxColumn("Select"),
     }
 
+    # Render editable table for notebook management
     edited_df = st.data_editor(
         df_orig,
         column_config=col_cfg,
@@ -68,16 +81,14 @@ def render_notebooks_section() -> None:
         key="notebooks_editor",
     )
 
-    # Persist adds / renames
+    # Handle new notebook creation: rows without id
     new_rows = edited_df[edited_df["id"].isna() & edited_df["Notebook"].notna()]
-
     created_any = False
-
     existing_names = {n.lower() for _, n in notebooks_raw}
     for _, row in new_rows.iterrows():
         new_name = row["Notebook"].strip()
         if not new_name:
-            continue
+            continue # skip blank names
         if new_name.lower() in existing_names:
             st.error(f"Notebook name '{new_name}' already exists.")
             continue
@@ -85,6 +96,7 @@ def render_notebooks_section() -> None:
         created_any = True
         existing_names.add(new_name.lower())
 
+    # Handle notebook renames: compare edited vs original names
     renamed = (
         edited_df[edited_df["id"].notna()]
         .merge(df_orig[["id", "Notebook"]], on="id", suffixes=("_new", "_old"))
@@ -101,74 +113,73 @@ def render_notebooks_section() -> None:
         existing_names.discard(old.lower())
         existing_names.add(new.lower())
 
-    if created_any:                           # refresh the table
+    # If any notebooks were created, rerun to refresh table
+    if created_any:
         st.rerun()
 
+    # Determine selected notebook from checkbox
     sel_rows = edited_df[edited_df["Select"].fillna(False)]
     sel_nb_id = int(sel_rows.iloc[0]["id"]) if not sel_rows.empty else None
     sel_nb_name = sel_rows.iloc[0]["Notebook"] if not sel_rows.empty else None
 
-    # -------- Action buttons --------
+    # Action buttons: Review, Browse, Import, Export, Delete
     with st.container():
         btn_cols = st.columns(5)
-
-        # Review
-        if btn_cols[0].button("", key="nb_review_btn",
-                            type="tertiary", icon=":material/play_arrow:",
-                            use_container_width=True,
-                            disabled=sel_nb_id is None):
+        # REVIEW button
+        if btn_cols[0].button("", key="nb_review_btn", type="tertiary",
+                               icon=":material/play_arrow:", use_container_width=True,
+                               disabled=sel_nb_id is None):
+            # Set state for review mode and reboot UI
             st.session_state.update(
-                selected_notebook_id = sel_nb_id,
-                selected_notebook_mode = "review",
-                review_note_id = None,
-                review_note_edit_mode = False,
-            ); st.rerun()
+                selected_notebook_id=sel_nb_id,
+                selected_notebook_mode="review",
+                review_note_id=None,
+                review_note_edit_mode=False,
+            )
+            st.rerun()
 
-        # Browse
-        if btn_cols[1].button("", key="nb_browse_btn",
-                            type="tertiary", icon=":material/visibility:",
-                            use_container_width=True,
-                            disabled=sel_nb_id is None):
-            st.session_state.selected_notebook_id = sel_nb_id; st.rerun()
+        # Browse button
+        if btn_cols[1].button("", key="nb_browse_btn", type="tertiary",
+                               icon=":material/visibility:", use_container_width=True,
+                               disabled=sel_nb_id is None):
+            st.session_state.selected_notebook_id = sel_nb_id
+            st.rerun()
 
-        # Import
-        if btn_cols[2].button("", key="nb_import_btn",
-                            type="tertiary", icon=":material/upload:",
-                            use_container_width=True):
+        # Import button
+        if btn_cols[2].button("", key="nb_import_btn", type="tertiary",
+                               icon=":material/upload:", use_container_width=True):
             import_notebook_dialog()
 
-        # Export
+        # Excport button (JSON download) if selection exists
         if sel_nb_id is not None:
             nb_json = json.dumps(
                 {
                     "name": sel_nb_name,
-                    "notes": [{"tab_name": n[1], "content": n[2]} for n in get_notes(sel_nb_id)],
-                },
-                indent=2,
+                    "notes": [
+                        {"tab_name": n[1], "content": n[2]} for n in get_notes(sel_nb_id)
+                    ],
+                }, indent=2
             )
             btn_cols[3].download_button(
-                label="",
-                data=nb_json,
+                label="", data=nb_json,
                 file_name=f"{sel_nb_name}.json",
-                mime="application/json",
-                key=f"download_nb_{sel_nb_id}",
-                type="tertiary",
-                icon=":material/download:",
-                use_container_width=True,
+                mime="application/json", key=f"download_nb_{sel_nb_id}",
+                type="tertiary", icon=":material/download:",
+                use_container_width=True
             )
         else:
             btn_cols[3].button("", disabled=True, key="nb_export_btn_disabled",
-                            type="tertiary", icon=":material/download:",
-                            use_container_width=True)
+                                type="tertiary", icon=":material/download:",
+                                use_container_width=True)
 
-        # Delete
-        if btn_cols[4].button("", key="nb_delete_btn",
-                            type="tertiary", icon=":material/delete:",
-                            use_container_width=True,
-                            disabled=sel_nb_id is None):
-            st.session_state.notebook_pending_delete = sel_nb_id; st.rerun()
+        # Delete button with confirmation
+        if btn_cols[4].button("", key="nb_delete_btn", type="tertiary",
+                               icon=":material/delete:", use_container_width=True,
+                               disabled=sel_nb_id is None):
+            st.session_state.notebook_pending_delete = sel_nb_id
+            st.rerun()
 
-
+    # Handle delete confirmation dialog
     pending_nb_id = st.session_state.get("notebook_pending_delete")
     if pending_nb_id is not None and pending_nb_id == sel_nb_id:
         st.info(f"Delete notebook **{sel_nb_name}**?")
@@ -182,35 +193,45 @@ def render_notebooks_section() -> None:
             st.session_state.notebook_pending_delete = None
             st.rerun()
 
-def render_notebook_detail(nb_id: int):
+
+def render_notebook_detail(nb_id: int) -> None:
+    """
+    Show detail view of a single notebook, listing tabs (notes) with editing,
+    preview, rename, delete, and reset stats options.
+    """
     import pandas as pd
     from utils.notes_db import c as notes_c, conn as notes_conn
 
-    # ---------- load ----------
+    # Load notebook name or error if missing
     notes_c.execute("SELECT name FROM notebooks WHERE id = ?", (nb_id,))
     row = notes_c.fetchone()
     if not row:
-        st.error("Notebook missing."); st.session_state.selected_notebook_id = None; return
+        st.error("Notebook missing.")
+        st.session_state.selected_notebook_id = None
+        return
     nb_name = row[0]
 
+    # Header with notebook title
     st.markdown(f"<h2 style='text-align:center;'>{nb_name}</h2>", unsafe_allow_html=True)
 
-    # ---------- Back / Reset Stats ----------
+    # Back and Reset Stats buttons
     hcols = st.columns(2)
     if hcols[0].button("Back", use_container_width=True):
-        st.session_state.selected_notebook_id = None; st.rerun()
+        st.session_state.selected_notebook_id = None
+        st.rerun()
     if hcols[1].button("Reset Stats", use_container_width=True):
         _reset_notebook_stats(nb_id, notes_c, notes_conn)
-        st.success("All SM‑2 data reset."); st.rerun()
+        st.success("All SM‑2 data reset.")
+        st.rerun()
 
-    # ---------- notes list ----------
+    # Fetch or initialize notes for this notebook
     notes = get_notes(nb_id)
     if not notes:
-        create_note(nb_id, "Default", DEFAULT_TAB_CONTENT); st.rerun()
+        create_note(nb_id, "Default", DEFAULT_TAB_CONTENT)
+        st.rerun()
 
-    df_orig = pd.DataFrame(
-        [{"id": nid, "Select": False, "Tab": t} for nid, t, _ in notes]
-    )
+    # Build DataFrame for tabs with id, selection, and tab name
+    df_orig = pd.DataFrame([{"id": nid, "Select": False, "Tab": t} for nid, t, _ in notes])
     edited = st.data_editor(
         df_orig,
         column_config={
@@ -224,50 +245,55 @@ def render_notebook_detail(nb_id: int):
         key=f"nb_editor_{nb_id}",
     )
 
-    # inline rename
-    delta = (edited.merge(df_orig, on="id", suffixes=("_new", "_old"))
-                    .query("Tab_new != Tab_old"))
+    # Inline renaming: detect changed Tab names and update DB
+    delta = (
+        edited.merge(df_orig, on="id", suffixes=("_new", "_old"))
+             .query("Tab_new != Tab_old")
+    )
     for _, r in delta.iterrows():
         rename_note(int(r["id"]), r["Tab_new"].strip())
 
-    # ---------- existing edit‑mode? ----------
+    # If currently editing a tab, render the form and exit
     if st.session_state.get("editing_tab_id"):
-        _render_tab_edit_form(nb_id)  # defined just below
+        _render_tab_edit_form(nb_id)
         return
 
-    # ---------- selection ----------
+    # Determine selected tab row for preview/edit/delete
     sel = edited[edited["Select"].fillna(False)]
     sel_id = int(sel.iloc[0]["id"]) if not sel.empty else None
     selected_note = next((n for n in notes if n[0] == sel_id), None)
 
-    # ---------- button bar (Add‑Tab left of Edit) ----------
+    # Buttons: Add Tab, Edit, Stats, Delete
     bcols = st.columns(4)
     if bcols[0].button("Add Tab", use_container_width=True):
         new_id = create_note(nb_id, "New Tab", "")
-        st.session_state.editing_tab_id = new_id; st.rerun()
-
+        st.session_state.editing_tab_id = new_id
+        st.rerun()
     if bcols[1].button("Edit", disabled=sel_id is None, use_container_width=True):
-        st.session_state.editing_tab_id = sel_id; st.rerun()
-
+        st.session_state.editing_tab_id = sel_id
+        st.rerun()
     if bcols[2].button("Stats", disabled=sel_id is None, use_container_width=True):
         cur = st.session_state.get("selected_stats_note_id")
         st.session_state.selected_stats_note_id = None if cur == sel_id else sel_id
         st.rerun()
-
     if bcols[3].button("Delete", disabled=sel_id is None, use_container_width=True):
-        delete_note(sel_id); st.success("Deleted."); st.rerun()
+        delete_note(sel_id)
+        st.success("Deleted.")
+        st.rerun()
 
-    # ---------- preview / stats ----------
+    # Preview or show stats for selected tab
     if selected_note:
         _, tab, body = selected_note
         with st.container(border=True):
             st.markdown(f"### {tab}", unsafe_allow_html=True)
+            # Render Graphviz if detected, else markdown content
             code = _extract_graphviz(body)
             if code:
                 st.graphviz_chart(code, use_container_width=True)
             else:
                 st.markdown(body or "*[Empty]*", unsafe_allow_html=True)
 
+            # Show SM-2 stats line if toggled
             if st.session_state.get("selected_stats_note_id") == sel_id:
                 _, _, _, _, nr, interval, rep, ef = get_note_by_id(sel_id)
                 nr_str = nr.split("T")[0] if nr else "—"
@@ -278,15 +304,23 @@ def render_notebook_detail(nb_id: int):
                     unsafe_allow_html=True
                 )
     else:
-        st.markdown("<p style='text-align:center;'>Select a tab to preview.</p>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            "<p style='text-align:center;'>Select a tab to preview.</p>",
+            unsafe_allow_html=True
+        )
 
-# ---------- inline tab‑edit helper ----------
-def _render_tab_edit_form(nb_id: int):
+
+def _render_tab_edit_form(nb_id: int) -> None:
+    """
+    Inline form to rename and edit a single notebook tab.
+    Provides Save and Cancel buttons to commit or abort changes.
+    """
     note_id = st.session_state.editing_tab_id
     note = get_note_by_id(note_id)
     if not note:
-        st.error("Note not found."); st.session_state.editing_tab_id = None; return
+        st.error("Note not found.")
+        st.session_state.editing_tab_id = None
+        return
     _, _, tab_name, content, *_ = note
 
     with st.container(border=True):
@@ -298,11 +332,17 @@ def _render_tab_edit_form(nb_id: int):
                 rename_note(note_id, new_tab)
                 update_note(note_id, new_body)
                 st.session_state.editing_tab_id = None
-                st.success("Saved!"); st.rerun()
+                st.success("Saved!")
+                st.rerun()
             if c2.form_submit_button("Cancel", use_container_width=True):
-                st.session_state.editing_tab_id = None; st.rerun()
-    
-def _reset_notebook_stats(nb_id: int, notes_c, notes_conn):
+                st.session_state.editing_tab_id = None
+                st.rerun()
+
+
+def _reset_notebook_stats(nb_id: int, notes_c, notes_conn) -> None:
+    """
+    Reset SM-2 spaced-repetition statistics for all notes in a notebook.
+    """
     notes_c.execute(
         """
         UPDATE notes
@@ -316,9 +356,14 @@ def _reset_notebook_stats(nb_id: int, notes_c, notes_conn):
     )
     notes_conn.commit()
 
-def render_notebook_review(nb_id: int):
-    # --- Header & back ----
-    top = st.columns([2,8])
+
+def render_notebook_review(nb_id: int) -> None:
+    """
+    Present a spaced-repetition review interface for a notebook's notes.
+    Includes grading buttons (Again, Hard, Good, Easy) and next-review projections.
+    """
+    # Header with back button and title/stats
+    top = st.columns([2, 8])
     if top[0].button("Back", key="nb_rev_back", use_container_width=True):
         st.session_state.update(
             selected_notebook_id=None,
@@ -328,90 +373,109 @@ def render_notebook_review(nb_id: int):
         )
         st.rerun()
 
-    # notebook title & counters
     stats = get_notebook_stats(nb_id)
-    name = [n for n in get_notebooks() if n[0]==nb_id][0][1]
+    name = next(n for n in get_notebooks() if n[0] == nb_id)[1]
     top[1].markdown(
         f"<h2 style='text-align:left;'>{name} — Review</h2>"
         f"<p>New: {stats['new']} | Due: {stats['due']}</p>",
-        unsafe_allow_html=True)
+        unsafe_allow_html=True
+    )
 
-    if stats["new"]==0 and stats["due"]==0:
+    # If nothing to review, show success message
+    if stats["new"] == 0 and stats["due"] == 0:
         st.success("🎉  Nothing to review right now!")
         return
 
+    # Load full notes with SM-2 data
     notes = get_notes_full(nb_id)
     if not notes:
         st.info("Notebook is empty.")
         return
 
-    # pick current note
+    # Initialize or fetch current review note id
     if st.session_state.review_note_id is None:
         st.session_state.review_note_id = notes[0][0]
     note = get_note_by_id(st.session_state.review_note_id)
     if not note:
-        st.error("Note not found."); return
+        st.error("Note not found.")
+        return
 
     note_id, _, tab_name, content, nr, interval, repetition, ef = note
     st.markdown(f"### {tab_name}")
 
-    # -------- EDIT MODE ----------------------------
+    # Edit mode for current note review
     if st.session_state.review_note_edit_mode:
         with st.form("edit_note_review", clear_on_submit=False):
             new_tab = st.text_input("Tab Name", value=tab_name)
-            new_body= st.text_area("Content", value=content, height=300)
-            e1,e2 = st.columns(2)
+            new_body = st.text_area("Content", value=content, height=300)
+            e1, e2 = st.columns(2)
             with e2:
                 if st.form_submit_button("Save"):
                     rename_note(note_id, new_tab)
                     update_note(note_id, new_body)
                     st.success("Updated!")
-                    st.session_state.review_note_edit_mode=False
+                    st.session_state.review_note_edit_mode = False
                     st.rerun()
             with e1:
                 if st.form_submit_button("Cancel"):
-                    st.session_state.review_note_edit_mode=False
+                    st.session_state.review_note_edit_mode = False
                     st.rerun()
-        return  # stop, the form already rendered
-    # -------- VIEW MODE ----------------------------
+        return
+
+    # View mode: render content or graphviz
     code = _extract_graphviz(content)
     if code:
         st.graphviz_chart(code, use_container_width=True)
     else:
-        st.markdown(content if content.strip() else "*[Empty note]*",
-                    unsafe_allow_html=True)
+        st.markdown(content if content.strip() else "*[Empty note]*", unsafe_allow_html=True)
 
     st.divider()
 
-    # ---- grading projections row ---------------
+    # Show next-review projections for grading buttons
     proj_a = format_interval_short(project_interval_note(note, 0))
     proj_h = format_interval_short(project_interval_note(note, 3))
     proj_g = format_interval_short(project_interval_note(note, 4))
     proj_e = format_interval_short(project_interval_note(note, 5))
 
-    ph = st.columns([2,1,1,1,1])
-    ph[1].markdown(proj_a); ph[2].markdown(proj_h)
-    ph[3].markdown(proj_g); ph[4].markdown(proj_e)
+    ph = st.columns([2, 1, 1, 1, 1])
+    ph[1].markdown(proj_a)
+    ph[2].markdown(proj_h)
+    ph[3].markdown(proj_g)
+    ph[4].markdown(proj_e)
 
-    pb = st.columns([2,1,1,1,1])
+    # Grading buttons: Again, Hard, Good, Easy
+    pb = st.columns([2, 1, 1, 1, 1])
     if pb[0].button("Edit", key="nb_rev_edit"):
-        st.session_state.review_note_edit_mode=True; st.rerun()
+        st.session_state.review_note_edit_mode = True
+        st.rerun()
     if pb[1].button("Again"):
-        update_sm2_note(note_id, 0); _next_note(nb_id)
+        update_sm2_note(note_id, 0)
+        _next_note(nb_id)
     if pb[2].button("Hard"):
-        update_sm2_note(note_id, 3); _next_note(nb_id)
+        update_sm2_note(note_id, 3)
+        _next_note(nb_id)
     if pb[3].button("Good"):
-        update_sm2_note(note_id, 4); _next_note(nb_id)
+        update_sm2_note(note_id, 4)
+        _next_note(nb_id)
     if pb[4].button("Easy"):
-        update_sm2_note(note_id, 5); _next_note(nb_id)
+        update_sm2_note(note_id, 5)
+        _next_note(nb_id)
 
-def _next_note(nb_id):
+
+def _next_note(nb_id: int) -> None:
+    """
+    Advance to the next note in review, cycling through list.
+    Resets edit mode and reruns UI.
+    """
     from utils.notes_db import get_notes_full
     notes = get_notes_full(nb_id)
-    if not notes: return
+    if not notes:
+        return
     ids = [n[0] for n in notes]
     cur = st.session_state.review_note_id
     idx = ids.index(cur) if cur in ids else -1
-    st.session_state.review_note_id = ids[(idx+1)%len(ids)]
-    st.session_state.review_note_edit_mode=False
+
+    # Cycle to next note id
+    st.session_state.review_note_id = ids[(idx + 1) % len(ids)]
+    st.session_state.review_note_edit_mode = False
     st.rerun()
