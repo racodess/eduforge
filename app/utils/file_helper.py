@@ -388,35 +388,42 @@ class FileHelper:
 
     def generate_graphs_pipeline(self, text: str, graph_type: str) -> List[model_schemas.NoteItem]:
         """
-        Generate mind maps or knowledge graphs from text via LLM prompts.
+        Generate mind maps or knowledge graphs from text or image data URI.
         Uses a single holistic content flow without chunk merging.
         Ensures graphviz formatting in the output.
         """
         from utils.model_helper import ModelHelper
-        from utils.prompts import (
-            MIND_MAP_GENERATION_PROMPT,
-            KNOWLEDGE_GRAPH_GENERATION_PROMPT
-        )
+        from utils.prompts import MIND_MAP_GENERATION_PROMPT
 
-        prompt = (
-            MIND_MAP_GENERATION_PROMPT
-            if graph_type == "mind_map"
-            else KNOWLEDGE_GRAPH_GENERATION_PROMPT
-        )
-
+        # Determine whether we're handling text or image content
+        prompt = MIND_MAP_GENERATION_PROMPT
         helper = ModelHelper()
-        response = helper.get_flashcards(
-            conversation=[],
-            system_message=prompt,
-            user_text=text,
-            run_as_image=False,
-            response_format=model_schemas.NoteItem
-        )
-        note = model_schemas.NoteItem.model_validate_json(response)
-        
+
+        if text.startswith("data:image"):  # If the input is an image
+            # Handle image input
+            chunks = [{"title": "Uploaded Image", "content": text}]
+            response = helper.get_flashcards(
+                conversation=[],
+                system_message=prompt,
+                user_text=text,  # For image, we directly send the image data
+                run_as_image=True,  # Indicating that this is an image
+                response_format=model_schemas.NoteItem
+            )
+        else:
+            # Handle text input
+            response = helper.get_flashcards(
+                conversation=[],
+                system_message=prompt,
+                user_text=text,  # For text, we send the plain text
+                run_as_image=False,  # Indicating that this is text
+                response_format=model_schemas.NoteItem
+            )
+
         # Wrap raw graph content in code fences if needed
+        note = model_schemas.NoteItem.model_validate_json(response)
         if not re.search(r"```(?:graphviz|dot)\s", note.content, re.IGNORECASE):
             note.content = f"```graphviz\n{note.content.strip()}\n```"
+
         return [note]
 
     # Dispatch table mapping abstract content types to read functions
@@ -426,3 +433,4 @@ class FileHelper:
         'pdf': lambda path: FileHelper._get_img_uri(FileHelper._get_image(path)[0])
             if FileHelper._get_image(path) else "",
     }
+    

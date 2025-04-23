@@ -42,7 +42,6 @@ def init_session_state() -> None:
     state.setdefault("view_show_answer", False)
     state.setdefault("selected_card_id", None)
     state.setdefault("deck_fields", {}) # custom field definitions per deck
-    state.setdefault("edit_fields", False)
 
     # Notebooks: selection, deletion, and editing flags
     state.setdefault("selected_notebook_id", None)
@@ -68,7 +67,7 @@ def main() -> None:
     """
     # Initialize SQLite databases and ensure schema is up-to-date
     init_flashcards_db()
-    update_db_schema()  # add missing columns if necessary
+    update_db_schema() # add missing columns if necessary
     init_notes_db()
 
     # Ensure session state has all needed keys
@@ -106,11 +105,20 @@ def main() -> None:
         return
 
     # Default dashboard: show decks, notebooks, and quiz
-    render_decks_section()
-    st.divider()
-    render_notebooks_section()
-    st.divider() # new spacer under notebooks for visual separation
-    render_quiz_section() # embed quiz section directly in main page
+    with st.container(border=True):
+        render_decks_section()
+    
+    st.text("")
+    st.text("")
+
+    with st.container(border=True):
+        render_notebooks_section()
+    
+    st.text("")
+    st.text("")
+
+    with st.container(border=True):
+        render_quiz_section()
 
 
 # Run the app

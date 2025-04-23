@@ -118,56 +118,60 @@ def render_quiz_section() -> None:
         "answer": 1,
     }
 
-    # Container for the quiz section UI
-    with st.container(border=True):
-        # Section header
-        st.markdown(
-            "<h2 style='text-align:center;'>Quiz 📝</h2>",
-            unsafe_allow_html=True,
-        )
+    # Section header
+    st.markdown(
+        "<h2 style='text-align:center;'>Quiz 📝</h2>",
+        unsafe_allow_html=True,
+    )
 
-        # Prompt for OpenAI API key if not already set
-        if not state.quiz_api_key:
-            key_input = st.text_input("OpenAI API key", type="password")
-            if key_input:
-                state.quiz_api_key = key_input
+    # Prompt for OpenAI API key if not already set
+    if not state.quiz_api_key:
+        key_input = st.text_input("OpenAI API key", type="password")
+        if key_input:
+            state.quiz_api_key = key_input
 
-        # Topic input field and generate button
-        st.markdown(
-            "<p style='text-align:center;'>What would you like to be quizzed on?</p>",
-            unsafe_allow_html=True,
-        )
-        topic_col, button_col = st.columns([5, 2])
-        topic = topic_col.text_input(
-            "quiz_topic",
-            label_visibility="collapsed",
-            placeholder="Data Structures",
-        )
-        generate_clicked = button_col.button("Generate ⚡", use_container_width=True)
+    # Topic input field and generate button
+    st.markdown(
+        "<p style='text-align:center;'>What would you like to be quizzed on?</p>",
+        unsafe_allow_html=True,
+    )
+    topic_col, button_col = st.columns([5, 2])
+    topic = topic_col.text_input(
+        "quiz_topic",
+        label_visibility="collapsed",
+        placeholder="Data Structures",
+    )
+    generate_clicked = button_col.button("", type="secondary", icon=":material/send:", use_container_width=True)
 
-        st.divider()
+    st.text("")
+    st.text("")
+    st.text("")
+    st.text("")
 
-        # Difficulty selection buttons
-        st.markdown(
-            "<p style='text-align:center;'>Select a difficulty level</p>",
-            unsafe_allow_html=True,
-        )
-        beg_col, int_col, exp_col = st.columns(3)
-        if beg_col.button("Beginner", use_container_width=True):
-            state.difficulty, state.difficulty_selected = "Beginner", True
-        if int_col.button("Intermediate", use_container_width=True):
-            state.difficulty, state.difficulty_selected = "Intermediate", True
-        if exp_col.button("Expert", use_container_width=True):
-            state.difficulty, state.difficulty_selected = "Expert", True
+    # Difficulty selection buttons
+    st.markdown(
+        "<p style='text-align:center;'>Select a difficulty level</p>",
+        unsafe_allow_html=True,
+    )
+    beg_col, int_col, exp_col = st.columns(3)
+    if beg_col.button("Easy", use_container_width=True):
+        state.difficulty, state.difficulty_selected = "Easy", True
+    if int_col.button("Medium", use_container_width=True):
+        state.difficulty, state.difficulty_selected = "Medium", True
+    if exp_col.button("Hard", use_container_width=True):
+        state.difficulty, state.difficulty_selected = "Hard", True
 
-        # Display current difficulty
-        st.markdown(
-            f"<p style='text-align:right;'><em>Selected: {state.difficulty}</em></p>",
-            unsafe_allow_html=True,
-        )
+    # Display current difficulty
+    st.markdown(
+        f"<p style='text-align:right;'><em>Selected: {state.difficulty}</em></p>",
+        unsafe_allow_html=True,
+    )
 
-        st.divider()
+    st.text("")
+    st.text("")
 
+
+    with st.container():
         # Handle question generation when button is clicked
         if generate_clicked:
             # Validate inputs
@@ -225,6 +229,11 @@ def render_quiz_section() -> None:
             if "code" in q:
                 st.code(q["code"], language="python")
 
+            st.text("")
+            st.text("")
+            st.text("")
+            st.text("")
+
             # Arrange choice buttons in two columns
             col_left, col_right = st.columns(2)
             for idx, choice_text in enumerate(q["choices"]):
@@ -245,6 +254,10 @@ def render_quiz_section() -> None:
             elif state.result == "incorrect":
                 st.error(state.answer_message)
 
+            st.text("")
+            st.text("")
+            st.divider()
+
             # Display counters for correct/incorrect answers
             st.text("")  # Spacer
             metric_col1, metric_col2 = st.columns(2)
@@ -252,31 +265,30 @@ def render_quiz_section() -> None:
             metric_col2.metric("Incorrect", state.incorrect_counter)
 
             # Action buttons: reset counters or generate similar question
-            with st.container():
-                reset_col, similar_col = st.columns(2)
-                reset_col.button("Reset counters", on_click=_reset_counters, use_container_width=True)
+            reset_col, similar_col = st.columns(2)
+            reset_col.button("", on_click=_reset_counters, type="secondary", icon=":material/delete_history:", use_container_width=True)
 
-                if similar_col.button("Generate similar", use_container_width=True):
-                    # Clear previous result and append follow-up prompt
-                    state.result = ""
-                    state.conversation.append({
-                        "role": "user",
-                        "content": (
-                            "Generate another *different* question of the same difficulty and topic. "
-                            "Same JSON format."
-                        ),
-                    })
-                    # Call OpenAI to get a new question
-                    new_raw = OpenAI(api_key=state.quiz_api_key).chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=state.conversation,
-                        temperature=0.7,
-                    ).choices[0].message.content
+            if similar_col.button("", type="secondary", icon=":material/autorenew:", use_container_width=True):
+                # Clear previous result and append follow-up prompt
+                state.result = ""
+                state.conversation.append({
+                    "role": "user",
+                    "content": (
+                        "Generate another *different* question of the same difficulty and topic. "
+                        "Same JSON format."
+                    ),
+                })
+                # Call OpenAI to get a new question
+                new_raw = OpenAI(api_key=state.quiz_api_key).chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=state.conversation,
+                    temperature=0.7,
+                ).choices[0].message.content
 
-                    # Parse and handle new question response
-                    new_question = _safe_json(new_raw)
-                    if new_question is None:
-                        st.error("Model returned malformed JSON:\n\n" + new_raw)
-                    else:
-                        state.question = new_question
-                        st.rerun()
+                # Parse and handle new question response
+                new_question = _safe_json(new_raw)
+                if new_question is None:
+                    st.error("Model returned malformed JSON:\n\n" + new_raw)
+                else:
+                    state.question = new_question
+                    st.rerun()

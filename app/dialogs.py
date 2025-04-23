@@ -8,7 +8,7 @@ Utilizes Streamlit's @st.dialog decorator for user interactions in pop-up window
 import json
 import streamlit as st
 
-from notebooks import DEFAULT_TAB_CONTENT
+from notebooks import DEFAULT_NOTE_CONTENT
 from utils.flashcards_db import create_deck
 from utils.notes_db import (
     create_notebook, get_notes, create_note, delete_note
@@ -233,7 +233,7 @@ def delete_tab_dialog(notebook_id: int) -> None:
 
             # Ensure at least one tab remains by creating default if needed
             if len(notes) == 1:
-                create_note(notebook_id, "Default", DEFAULT_TAB_CONTENT)
+                create_note(notebook_id, "Default", DEFAULT_NOTE_CONTENT)
 
             # Delete the selected tab
             delete_note(note_id_to_delete)

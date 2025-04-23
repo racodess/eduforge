@@ -2,7 +2,7 @@
 
 """
 Provides notebook and note management UIs for the EduForge study platform.
-Includes listing, creating, renaming, deleting notebooks and tabs,
+Includes listing, creating, renaming, deleting notebooks and notes,
 detailed note editing, preview, and spaced-repetition review workflows.
 """
 
@@ -18,19 +18,19 @@ from utils.notes_db import (
 from utils.flashcards_sm2 import format_interval_short
 from utils.notes_sm2 import update_sm2 as update_sm2_note, project_interval as project_interval_note
 
-# Default content for a new notebook tab when none exist
-DEFAULT_TAB_CONTENT = """\
+# Default content for a new notebook note when none exist
+DEFAULT_NOTE_CONTENT = """\
 # Welcome to Your Notebook!
 
-This is your *default* tab. Each notebook must always have at least one tab.
+This is your *default* note. Each notebook must always have at least one note.
 
 ## Quick Guide
-- **Add** creates a new tab and immediately opens it in an edit form so you can name it and add notes. 
-  - If you have only a single "Default" tab, it’s automatically removed right after the new one is created.
-- **Edit** a tab to rename or modify it. You will see a "Save" and "Cancel" button for that tab.
-- **Delete** a tab from the notebook-level "Delete" button (opens a dialog).
+- **Add** creates a new note and immediately opens it in an edit form so you can name it and add notes. 
+  - If you have only a single "Default" note, it’s automatically removed right after the new one is created.
+- **Edit** a note to rename or modify it. You will see a "Save" and "Cancel" button for that note.
+- **Delete** a note from the notebook-level "Delete" button (opens a dialog).
   
-All tabs support **GitHub-Flavored Markdown** (headings, bold, italics, bullet lists, etc.). 
+All notes support **GitHub-Flavored Markdown** (headings, bold, italics, bullet lists, etc.). 
 """
 
 
@@ -64,7 +64,7 @@ def render_notebooks_section() -> None:
 
     # Configure how each column should render in data_editor
     col_cfg = {
-        "id": st.column_config.TextColumn(disabled=True),
+        "id": None,
         "new": st.column_config.NumberColumn("New", disabled=True),
         "learn": st.column_config.NumberColumn("Learn", disabled=True),
         "due": st.column_config.NumberColumn("Due", disabled=True),
@@ -126,7 +126,7 @@ def render_notebooks_section() -> None:
     with st.container():
         btn_cols = st.columns(5)
         # REVIEW button
-        if btn_cols[0].button("", key="nb_review_btn", type="tertiary",
+        if btn_cols[0].button("", key="nb_review_btn", type="secondary",
                                icon=":material/play_arrow:", use_container_width=True,
                                disabled=sel_nb_id is None):
             # Set state for review mode and reboot UI
@@ -139,14 +139,14 @@ def render_notebooks_section() -> None:
             st.rerun()
 
         # Browse button
-        if btn_cols[1].button("", key="nb_browse_btn", type="tertiary",
-                               icon=":material/visibility:", use_container_width=True,
+        if btn_cols[1].button("", key="nb_browse_btn", type="secondary",
+                               icon=":material/folder_open:", use_container_width=True,
                                disabled=sel_nb_id is None):
             st.session_state.selected_notebook_id = sel_nb_id
             st.rerun()
 
         # Import button
-        if btn_cols[2].button("", key="nb_import_btn", type="tertiary",
+        if btn_cols[2].button("", key="nb_import_btn", type="secondary",
                                icon=":material/upload:", use_container_width=True):
             import_notebook_dialog()
 
@@ -156,7 +156,7 @@ def render_notebooks_section() -> None:
                 {
                     "name": sel_nb_name,
                     "notes": [
-                        {"tab_name": n[1], "content": n[2]} for n in get_notes(sel_nb_id)
+                        {"note_name": n[1], "content": n[2]} for n in get_notes(sel_nb_id)
                     ],
                 }, indent=2
             )
@@ -164,16 +164,16 @@ def render_notebooks_section() -> None:
                 label="", data=nb_json,
                 file_name=f"{sel_nb_name}.json",
                 mime="application/json", key=f"download_nb_{sel_nb_id}",
-                type="tertiary", icon=":material/download:",
+                type="secondary", icon=":material/download:",
                 use_container_width=True
             )
         else:
             btn_cols[3].button("", disabled=True, key="nb_export_btn_disabled",
-                                type="tertiary", icon=":material/download:",
+                                type="secondary", icon=":material/download:",
                                 use_container_width=True)
 
         # Delete button with confirmation
-        if btn_cols[4].button("", key="nb_delete_btn", type="tertiary",
+        if btn_cols[4].button("", key="nb_delete_btn", type="secondary",
                                icon=":material/delete:", use_container_width=True,
                                disabled=sel_nb_id is None):
             st.session_state.notebook_pending_delete = sel_nb_id
@@ -196,8 +196,8 @@ def render_notebooks_section() -> None:
 
 def render_notebook_detail(nb_id: int) -> None:
     """
-    Show detail view of a single notebook, listing tabs (notes) with editing,
-    preview, rename, delete, and reset stats options.
+    Show detail view of a single notebook, listing notes (notes) with editing,
+    preview, and spaced-repetition review workflows.
     """
     import pandas as pd
     from utils.notes_db import c as notes_c, conn as notes_conn
@@ -211,87 +211,133 @@ def render_notebook_detail(nb_id: int) -> None:
         return
     nb_name = row[0]
 
+    if "add_new_note" not in st.session_state: st.session_state.add_new_note = False
+    if "editing_note_id" not in st.session_state: st.session_state.editing_note_id = None
+
     # Header with notebook title
     st.markdown(f"<h2 style='text-align:center;'>{nb_name}</h2>", unsafe_allow_html=True)
 
     # Back and Reset Stats buttons
     hcols = st.columns(2)
-    if hcols[0].button("Back", use_container_width=True):
-        st.session_state.selected_notebook_id = None
+    if hcols[0].button("", type="secondary", icon=":material/arrow_back:", use_container_width=True):
+        st.session_state.update(
+            selected_notebook_id=None,
+            selected_notebook_mode=None,
+            editing_note_id=None,
+            add_new_note=False,
+            selected_stats_note_id=None,
+        )
         st.rerun()
-    if hcols[1].button("Reset Stats", use_container_width=True):
-        _reset_notebook_stats(nb_id, notes_c, notes_conn)
-        st.success("All SM‑2 data reset.")
+
+    # Ask for confirmation before wiping SM-2 stats
+    if hcols[1].button("Reset Stats", type="secondary", icon=":material/delete_history:", use_container_width=True):
+        st.session_state.notebook_pending_reset = nb_id
         st.rerun()
+
+    # Confirmation dialog for SM-2 stats reset
+    if st.session_state.get("notebook_pending_reset") == nb_id:
+        st.info("Permanently reset all SM-2 data for this notebook?")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, reset", use_container_width=True):
+            _reset_notebook_stats(nb_id, notes_c, notes_conn)
+            st.success("Notebook stats reset!")
+            st.session_state.notebook_pending_reset = None
+            st.rerun()
+        if c2.button("No, cancel", use_container_width=True):
+            st.session_state.notebook_pending_reset = None
+            st.rerun()
+
+    # Spacing
+    st.text("")
+    st.text("")
 
     # Fetch or initialize notes for this notebook
     notes = get_notes(nb_id)
     if not notes:
-        create_note(nb_id, "Default", DEFAULT_TAB_CONTENT)
+        create_note(nb_id, "Default", DEFAULT_NOTE_CONTENT)
         st.rerun()
 
-    # Build DataFrame for tabs with id, selection, and tab name
-    df_orig = pd.DataFrame([{"id": nid, "Select": False, "Tab": t} for nid, t, _ in notes])
-    edited = st.data_editor(
-        df_orig,
-        column_config={
-            "id":     st.column_config.TextColumn(disabled=True),
-            "Select": st.column_config.CheckboxColumn("Select"),
-            "Tab":    st.column_config.TextColumn("Tab Name"),
-        },
-        num_rows="fixed",
-        hide_index=True,
+    # Build DataFrame for notes with id and name
+    df_notes = pd.DataFrame([
+        {"id": nid, "Note": t}
+        for nid, t, _ in notes
+    ])
+
+    # Configure how each column should render in data_editor
+    col_cfg = {
+        "id": None,
+    }
+
+    # Show as selectable table using st.dataframe
+    state = st.dataframe(
+        df_notes,
         use_container_width=True,
-        key=f"nb_editor_{nb_id}",
+        column_config=col_cfg,
+        hide_index=True,
+        key=f"notes_df_{nb_id}",
+        on_select="rerun",
+        selection_mode="single-row"
     )
 
-    # Inline renaming: detect changed Tab names and update DB
-    delta = (
-        edited.merge(df_orig, on="id", suffixes=("_new", "_old"))
-             .query("Tab_new != Tab_old")
-    )
-    for _, r in delta.iterrows():
-        rename_note(int(r["id"]), r["Tab_new"].strip())
+    # Determine selected note id and record selection
+    selected_indices = state.selection.rows
+    sel_id = None
 
-    # If currently editing a tab, render the form and exit
-    if st.session_state.get("editing_tab_id"):
-        _render_tab_edit_form(nb_id)
-        return
+    if selected_indices:
+        row_idx = selected_indices[0]
+        sel_id = int(df_notes.iloc[row_idx]["id"])
+        sel_note = st.session_state.editing_note_id
+        if sel_note is not None: st.session_state.editing_note_id= sel_id
+    else:
+        st.session_state.editing_note_id = None
 
-    # Determine selected tab row for preview/edit/delete
-    sel = edited[edited["Select"].fillna(False)]
-    sel_id = int(sel.iloc[0]["id"]) if not sel.empty else None
-    selected_note = next((n for n in notes if n[0] == sel_id), None)
-
-    # Buttons: Add Tab, Edit, Stats, Delete
+    # Buttons: Add Note, Edit, Stats, Delete
     bcols = st.columns(4)
-    if bcols[0].button("Add Tab", use_container_width=True):
-        new_id = create_note(nb_id, "New Tab", "")
-        st.session_state.editing_tab_id = new_id
+    if bcols[0].button("", type="secondary", icon=":material/add:", use_container_width=True):
+        cur = st.session_state.get("add_new_note")
+        st.session_state.add_new_note = False if cur is True else True
+        st.session_state.editing_note_id = None
         st.rerun()
-    if bcols[1].button("Edit", disabled=sel_id is None, use_container_width=True):
-        st.session_state.editing_tab_id = sel_id
+    if bcols[1].button("", disabled=sel_id is None, type="secondary", icon=":material/edit:", use_container_width=True):
+        cur = st.session_state.get("editing_note_id")
+        st.session_state.editing_note_id = None if cur == sel_id else sel_id
+        st.session_state.add_new_note = False
         st.rerun()
-    if bcols[2].button("Stats", disabled=sel_id is None, use_container_width=True):
+    if bcols[2].button("", disabled=sel_id is None, type="secondary", icon=":material/query_stats:", use_container_width=True):
         cur = st.session_state.get("selected_stats_note_id")
         st.session_state.selected_stats_note_id = None if cur == sel_id else sel_id
+        st.session_state.add_new_note = False
         st.rerun()
-    if bcols[3].button("Delete", disabled=sel_id is None, use_container_width=True):
+    if bcols[3].button("", disabled=sel_id is None, type="secondary", icon=":material/close:", use_container_width=True):
         delete_note(sel_id)
         st.success("Deleted.")
         st.rerun()
 
-    # Preview or show stats for selected tab
+    # Spacing
+    st.text("")
+    st.text("")
+
+    # Add-Note workflow
+    if st.session_state.get("add_new_note"):
+        render_note_form(nb_id, editing=False, note_data=None)
+        return
+
+    # Edit-Note workflow
+    if st.session_state.get("editing_note_id"):
+        note_row = get_note_by_id(st.session_state.editing_note_id)
+        if note_row:
+            render_note_form(nb_id, editing=True, note_data=note_row)
+        return
+
+    # Preview mode
+    selected_note = next((n for n in notes if n[0] == sel_id), None)
     if selected_note:
-        _, tab, body = selected_note
+        _, note, body = selected_note
         with st.container(border=True):
-            st.markdown(f"### {tab}", unsafe_allow_html=True)
-            # Render Graphviz if detected, else markdown content
-            code = _extract_graphviz(body)
-            if code:
-                st.graphviz_chart(code, use_container_width=True)
-            else:
-                st.markdown(body or "*[Empty]*", unsafe_allow_html=True)
+            render_note_visual(note, body)
+
+            st.text("")
+            st.text("")
 
             # Show SM-2 stats line if toggled
             if st.session_state.get("selected_stats_note_id") == sel_id:
@@ -305,38 +351,9 @@ def render_notebook_detail(nb_id: int) -> None:
                 )
     else:
         st.markdown(
-            "<p style='text-align:center;'>Select a tab to preview.</p>",
+            "<h3 style='text-align:center;'>Select a note to preview.</h3>",
             unsafe_allow_html=True
         )
-
-
-def _render_tab_edit_form(nb_id: int) -> None:
-    """
-    Inline form to rename and edit a single notebook tab.
-    Provides Save and Cancel buttons to commit or abort changes.
-    """
-    note_id = st.session_state.editing_tab_id
-    note = get_note_by_id(note_id)
-    if not note:
-        st.error("Note not found.")
-        st.session_state.editing_tab_id = None
-        return
-    _, _, tab_name, content, *_ = note
-
-    with st.container(border=True):
-        with st.form(f"edit_tab_{note_id}", clear_on_submit=False):
-            new_tab = st.text_input("Tab Name", value=tab_name)
-            new_body = st.text_area("Content", value=content, height=300)
-            c1, c2 = st.columns(2)
-            if c1.form_submit_button("Save", use_container_width=True):
-                rename_note(note_id, new_tab)
-                update_note(note_id, new_body)
-                st.session_state.editing_tab_id = None
-                st.success("Saved!")
-                st.rerun()
-            if c2.form_submit_button("Cancel", use_container_width=True):
-                st.session_state.editing_tab_id = None
-                st.rerun()
 
 
 def _reset_notebook_stats(nb_id: int, notes_c, notes_conn) -> None:
@@ -358,124 +375,210 @@ def _reset_notebook_stats(nb_id: int, notes_c, notes_conn) -> None:
 
 
 def render_notebook_review(nb_id: int) -> None:
-    """
-    Present a spaced-repetition review interface for a notebook's notes.
-    Includes grading buttons (Again, Hard, Good, Easy) and next-review projections.
-    """
-    # Header with back button and title/stats
-    top = st.columns([2, 8])
-    if top[0].button("Back", key="nb_rev_back", use_container_width=True):
-        st.session_state.update(
-            selected_notebook_id=None,
-            selected_notebook_mode=None,
-            review_note_id=None,
-            review_note_edit_mode=False,
-        )
-        st.rerun()
+    """Render a spaced‑repetition review session for a notebook.
 
-    stats = get_notebook_stats(nb_id)
-    name = next(n for n in get_notebooks() if n[0] == nb_id)[1]
-    top[1].markdown(
-        f"<h2 style='text-align:left;'>{name} — Review</h2>"
-        f"<p>New: {stats['new']} | Due: {stats['due']}</p>",
-        unsafe_allow_html=True
+    The styling, spacing, and control layout now mirror the flashcard review
+    view to provide a consistent user experience across study modalities.
+    """
+
+    st.markdown(
+        "<h2 style='text-align:center;'>Notebook Review</h2>",
+        unsafe_allow_html=True,
     )
 
-    # If nothing to review, show success message
-    if stats["new"] == 0 and stats["due"] == 0:
-        st.success("🎉  Nothing to review right now!")
-        return
+    with st.container(border=True):
+        # Header section
+        stats = get_notebook_stats(nb_id)
+        name = next(nb for nb in get_notebooks() if nb[0] == nb_id)[1]
 
-    # Load full notes with SM-2 data
-    notes = get_notes_full(nb_id)
-    if not notes:
-        st.info("Notebook is empty.")
-        return
+        # Back button (first column mirrors flashcards layout)
+        top_row = st.columns([1, 1, 1, 1])
+        if top_row[0].button("Back", key="nb_rev_back_btn", use_container_width=True):
+            st.session_state.update(
+                selected_notebook_id=None,
+                selected_notebook_mode=None,
+                review_note_id=None,
+                review_note_edit_mode=False,
+            )
+            st.rerun()
 
-    # Initialize or fetch current review note id
-    if st.session_state.review_note_id is None:
-        st.session_state.review_note_id = notes[0][0]
-    note = get_note_by_id(st.session_state.review_note_id)
-    if not note:
-        st.error("Note not found.")
-        return
+        # Notebook title centred
+        name_row = st.columns([1])
+        name_row[0].markdown(
+            f"<h2 style='text-align:center;'>{name}</h2>",
+            unsafe_allow_html=True,
+        )
+        st.text("") # vertical breathing room
 
-    note_id, _, tab_name, content, nr, interval, repetition, ef = note
-    st.markdown(f"### {tab_name}")
+        # Review stats (colour‑coded like flashcards)
+        stats_row = st.columns([1, 1, 1])
+        stats_row[0].markdown(
+            f"<p style='text-align:center; color:lime'>New: {stats['new']}</p>",
+            unsafe_allow_html=True,
+        )
+        stats_row[1].markdown(
+            f"<p style='text-align:center; color:yellow'>Learn: {stats['learn']}</p>",
+            unsafe_allow_html=True,
+        )
+        stats_row[2].markdown(
+            f"<p style='text-align:center; color:red'>Due: {stats['due']}</p>",
+            unsafe_allow_html=True,
+        )
 
-    # Edit mode for current note review
-    if st.session_state.review_note_edit_mode:
-        with st.form("edit_note_review", clear_on_submit=False):
-            new_tab = st.text_input("Tab Name", value=tab_name)
-            new_body = st.text_area("Content", value=content, height=300)
-            e1, e2 = st.columns(2)
-            with e2:
-                if st.form_submit_button("Save"):
-                    rename_note(note_id, new_tab)
-                    update_note(note_id, new_body)
-                    st.success("Updated!")
-                    st.session_state.review_note_edit_mode = False
-                    st.rerun()
-            with e1:
-                if st.form_submit_button("Cancel"):
-                    st.session_state.review_note_edit_mode = False
-                    st.rerun()
-        return
+        # If nothing is due/new, celebrate and exit early
+        if stats["new"] == 0 and stats["due"] == 0:
+            st.success("Congratulations! You have completed your review.")
+            return
 
-    # View mode: render content or graphviz
-    code = _extract_graphviz(content)
+        # Divider for visual separation (mirrors flashcards)
+        st.divider()
+
+        # Note retrieval
+        notes = get_notes_full(nb_id)
+        if not notes:
+            st.info("Notebook is empty.")
+            return
+
+        if st.session_state.review_note_id is None:
+            st.session_state.review_note_id = notes[0][0]
+
+        note = get_note_by_id(st.session_state.review_note_id)
+        if not note:
+            st.error("Note not found.")
+            return
+
+        note_id, _, note_name, content, nr, interval, repetition, ef = note
+        render_note_visual(note_name, content)
+
+        # extra whitespace before projections/buttons
+        st.text("")
+        st.text("")
+        st.text("")
+        st.text("")
+
+        # Next review projections
+        proj_again = format_interval_short(project_interval_note(note, 0))
+        proj_hard = format_interval_short(project_interval_note(note, 3))
+        proj_good = format_interval_short(project_interval_note(note, 4))
+        proj_easy = format_interval_short(project_interval_note(note, 5))
+
+        proj_cols = st.columns([1, 1, 1, 1]) # align with Edit column below
+        proj_cols[0].markdown(
+            f"<p style='text-align:center; color:lime;'>{proj_again}</p>",
+            unsafe_allow_html=True,
+        )
+        proj_cols[1].markdown(
+            f"<p style='text-align:center; color:red;'>{proj_hard}</p>",
+            unsafe_allow_html=True,
+        )
+        proj_cols[2].markdown(
+            f"<p style='text-align:center; color:yellow;'>{proj_good}</p>",
+            unsafe_allow_html=True,
+        )
+        proj_cols[3].markdown(
+            f"<p style='text-align:center; color:lime;'>{proj_easy}</p>",
+            unsafe_allow_html=True,
+        )
+
+        def _next_note(nb_id) -> None:
+            """Cycle to the next note in the review queue and rerun UI."""
+            nxt_notes = get_notes_full(nb_id)
+            if not nxt_notes:
+                return
+            ids = [n[0] for n in nxt_notes]
+            cur = st.session_state.review_note_id
+            idx = ids.index(cur) if cur in ids else -1
+            st.session_state.review_note_id = ids[(idx + 1) % len(ids)]
+            st.session_state.review_note_edit_mode = False
+            st.rerun()
+
+        # Buttons row
+        btn_cols = st.columns([1, 1, 1, 1])
+        if btn_cols[0].button("Again", use_container_width=True):
+            update_sm2_note(note_id, 0)
+            _next_note(nb_id)
+        if btn_cols[1].button("Hard", use_container_width=True):
+            update_sm2_note(note_id, 3)
+            _next_note(nb_id)
+        if btn_cols[2].button("Good", use_container_width=True):
+            update_sm2_note(note_id, 4)
+            _next_note(nb_id)
+        if btn_cols[3].button("Easy", use_container_width=True):
+            update_sm2_note(note_id, 5)
+            _next_note(nb_id)
+
+def render_note_visual(note_title: str, body: str) -> None:
+    """
+    Show a single note exactly once, honouring the same look-and-feel
+    as flashcards.render_card_visual().
+    """
+    st.markdown(f"<h3 style='text-align:center;'>{note_title}</h3>",
+                unsafe_allow_html=True)
+
+    code = _extract_graphviz(body)
     if code:
         st.graphviz_chart(code, use_container_width=True)
     else:
-        st.markdown(content if content.strip() else "*[Empty note]*", unsafe_allow_html=True)
-
-    st.divider()
-
-    # Show next-review projections for grading buttons
-    proj_a = format_interval_short(project_interval_note(note, 0))
-    proj_h = format_interval_short(project_interval_note(note, 3))
-    proj_g = format_interval_short(project_interval_note(note, 4))
-    proj_e = format_interval_short(project_interval_note(note, 5))
-
-    ph = st.columns([2, 1, 1, 1, 1])
-    ph[1].markdown(proj_a)
-    ph[2].markdown(proj_h)
-    ph[3].markdown(proj_g)
-    ph[4].markdown(proj_e)
-
-    # Grading buttons: Again, Hard, Good, Easy
-    pb = st.columns([2, 1, 1, 1, 1])
-    if pb[0].button("Edit", key="nb_rev_edit"):
-        st.session_state.review_note_edit_mode = True
-        st.rerun()
-    if pb[1].button("Again"):
-        update_sm2_note(note_id, 0)
-        _next_note(nb_id)
-    if pb[2].button("Hard"):
-        update_sm2_note(note_id, 3)
-        _next_note(nb_id)
-    if pb[3].button("Good"):
-        update_sm2_note(note_id, 4)
-        _next_note(nb_id)
-    if pb[4].button("Easy"):
-        update_sm2_note(note_id, 5)
-        _next_note(nb_id)
+        st.markdown(body or "*[Empty]*", unsafe_allow_html=True)
 
 
-def _next_note(nb_id: int) -> None:
+def render_note_form(nb_id: int, *, editing: bool = False,
+                     note_data: tuple | None = None) -> None:
     """
-    Advance to the next note in review, cycling through list.
-    Resets edit mode and reruns UI.
+    Add / edit a note and give a live preview – mirrors flashcards.render_card_form().
+    `note_data` must be the DB row returned by get_note_by_id().
     """
-    from utils.notes_db import get_notes_full
-    notes = get_notes_full(nb_id)
-    if not notes:
-        return
-    ids = [n[0] for n in notes]
-    cur = st.session_state.review_note_id
-    idx = ids.index(cur) if cur in ids else -1
+    # Pull current values (or defaults)
+    if editing and note_data:
+        note_id, _, init_note, init_body, *_ = note_data
+    else:
+        note_id, init_note, init_body = None, "", ""
 
-    # Cycle to next note id
-    st.session_state.review_note_id = ids[(idx + 1) % len(ids)]
-    st.session_state.review_note_edit_mode = False
-    st.rerun()
+    form_key = f"note_form_{nb_id}_{note_id or 'new'}"
+    with st.form(form_key, clear_on_submit=False):
+        new_note = st.text_input("Note name", value=init_note,
+                                key=f"{form_key}_note")
+        new_body = st.text_area("Content (markdown / Graphviz)",
+                                value=init_body, height=300,
+                                key=f"{form_key}_body")
+
+        # Spacing
+        st.text("")
+        st.text("")
+        st.text("")
+        st.text("")
+
+        # Preview
+        st.markdown("<h6 style='text-align:left;'>Preview</h6>", unsafe_allow_html=True)
+        render_note_visual(new_note or "[Heading]", new_body)
+
+        # Spacing
+        st.text("")
+        st.text("")
+        st.text("")
+        st.text("")
+
+        c1, c2 = st.columns(2)
+        
+        if editing:
+            submit_button = c1.form_submit_button("", type="secondary", icon=":material/done_all:", use_container_width=True)
+        else:
+            submit_button = c1.form_submit_button("", type="secondary", icon=":material/add:", use_container_width=True)
+
+        if submit_button:
+            if not new_note.strip():
+                st.error("Note name cannot be empty.")
+                st.stop()
+
+            if editing and note_id: # update existing
+                rename_note(note_id, new_note)
+                update_note(note_id, new_body)
+            else: # add new
+                create_note(nb_id, new_note, new_body)
+                st.session_state.add_new_note = False
+            st.success("Note Updated!")
+            st.session_state.editing_note_id = None
+            st.rerun()
+
+        if c2.form_submit_button("Refresh", type="secondary", icon=":material/refresh:", use_container_width=True):
+            st.rerun()

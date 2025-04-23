@@ -83,18 +83,6 @@ create disconnected components.
 mandatory so the front‑end can autodetect the GraphViz block.
 """
 
-KNOWLEDGE_GRAPH_GENERATION_PROMPT = """
-**Task:**
-From the provided source material derive an *entity / relation graph*
-using **GraphViz DOT** syntax.  Model entities as nodes and labelled
-relations as directed edges (use the `label` attribute).  Avoid duplicate
-edges.
-
----
-**Output JSON Schema (NoteItem)** – identical to the mind‑map prompt
-above.
-"""
-
 REGENERATE_GRAPH_PROMPT = """
 **Task:**
 The user would like this graph regenerated (refined or re‑organised)

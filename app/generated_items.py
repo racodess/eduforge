@@ -138,19 +138,19 @@ def _render_flashcard_container(card, idx: int) -> None:
 
             # Action buttons: Add, Regenerate, Delete
             b1, b2, b3 = st.columns(3)
-            if b1.button("", key=f"add_fc_{idx}", type="tertiary",
+            if b1.button("", key=f"add_fc_{idx}", type="secondary",
                           icon=":material/add_circle:", use_container_width=True):
                 for deck_id in st.session_state.get("gen_target_deck_ids", []):
                     add_card(deck_id, card.front, card.back, extra_fields=None)
                 st.session_state.generated_cards.pop(idx)
                 st.rerun()
-            if b2.button("", key=f"regen_fc_{idx}", type="tertiary",
+            if b2.button("", key=f"regen_fc_{idx}", type="secondary",
                           icon=":material/cached:", use_container_width=True):
                 # Regenerate card via FileHelper logic
                 new_card = FileHelper().regenerate_flashcard(card)
                 st.session_state.generated_cards[idx] = new_card
                 st.rerun()
-            if b3.button("", key=f"del_fc_{idx}", type="tertiary",
+            if b3.button("", key=f"del_fc_{idx}", type="secondary",
                           icon=":material/cancel:", use_container_width=True):
                 st.session_state.generated_cards.pop(idx)
                 st.rerun()
@@ -215,18 +215,18 @@ def _render_note_container(note, idx: int) -> None:
 
             st.divider()
             b1, b2, b3 = st.columns(3)
-            if b1.button("", key=f"add_nt_{idx}", type="tertiary",
+            if b1.button("", key=f"add_nt_{idx}", type="secondary",
                           icon=":material/add_circle:", use_container_width=True):
                 for nb_id in st.session_state.get("gen_target_nb_ids", []):
                     create_note(nb_id, note.title, note.content)
                 st.session_state.generated_notes.pop(idx)
                 st.rerun()
-            if b2.button("", key=f"regen_nt_{idx}", type="tertiary",
+            if b2.button("", key=f"regen_nt_{idx}", type="secondary",
                           icon=":material/cached:", use_container_width=True):
                 new_note = FileHelper().regenerate_note(note)
                 st.session_state.generated_notes[idx] = new_note
                 st.rerun()
-            if b3.button("", key=f"del_nt_{idx}", type="tertiary",
+            if b3.button("", key=f"del_nt_{idx}", type="secondary",
                           icon=":material/cancel:", use_container_width=True):
                 st.session_state.generated_notes.pop(idx)
                 st.rerun()
@@ -315,19 +315,19 @@ def _render_graph_container(gdict: dict, idx: int) -> None:
 
             st.divider()
             b1, b2, b3 = st.columns(3)
-            if b1.button("", key=f"add_gr_{idx}", type="tertiary",
+            if b1.button("", key=f"add_gr_{idx}", type="secondary",
                           icon=":material/add_circle:", use_container_width=True):
                 for nb_id in st.session_state.get("gen_target_nb_ids", []):
                     create_note(nb_id, graph_item.title, graph_item.content)
                 st.session_state.generated_graphs.pop(idx)
                 st.rerun()
-            if b2.button("", key=f"regen_gr_{idx}", type="tertiary",
+            if b2.button("", key=f"regen_gr_{idx}", type="secondary",
                           icon=":material/cached:", use_container_width=True):
                 # Regenerate graph via FileHelper logic
                 new_graph = FileHelper().regenerate_graph(graph_item, graph_type=graph_type)
                 st.session_state.generated_graphs[idx]["item"] = new_graph
                 st.rerun()
-            if b3.button("", key=f"del_gr_{idx}", type="tertiary",
+            if b3.button("", key=f"del_gr_{idx}", type="secondary",
                           icon=":material/cancel:", use_container_width=True):
                 st.session_state.generated_graphs.pop(idx)
                 st.rerun()
