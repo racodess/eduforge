@@ -84,7 +84,8 @@ EduForge
 git clone https://github.com/racodess/eduforge.git
 cd eduforge
 
-echo OPENAI_API_KEY="your-api-key-here" > .env
+$env:OPENAI_API_KEY = "your_key_here"
+$env:OPENAI_API_KEY
 
 python -m venv venv
 .\venv\Scripts\activate
@@ -102,12 +103,13 @@ App available at [http://localhost:8501](http://localhost:8501).
 git clone https://github.com/racodess/eduforge.git
 cd eduforge
 
-echo 'OPENAI_API_KEY="your-api-key-here"' > .env
+export OPENAI_API_KEY="your_key_here"
+echo "$OPENAI_API_KEY"
 
-python -m venv venv
-source venv/bin/activate
+python3 -m venv myvenv
+source myvenv/bin/activate
 
-pip install -r setup/requirements.txt
+pip3 install -r setup/requirements.txt
 
 chmod +x run.sh
 ./run.sh
